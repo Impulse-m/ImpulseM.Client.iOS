@@ -559,6 +559,9 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
             }
             
             let resolvedEngine = resolveNetworkEngine(accountId: accountId, context: context, factory: arguments.networkEngineFactory, isAppExtension: isAppExtension)
+            if resolvedEngine.kind == .impulse {
+                context.disablesNetworkActions = true
+            }
             resolvedEngine.activate()
             let telemetryDirectory = basePath + "/network-telemetry"
             let telemetryConfiguration = NetworkTelemetryConfiguration.with(appConfiguration: appConfiguration)

@@ -22,6 +22,8 @@
 
 - (MTDatacenterAuthAction * _Nonnull)makeAuthActionWithSelector:(MTDatacenterAuthInfoSelector)selector isCdn:(bool)isCdn skipBind:(bool)skipBind completion:(void (^ _Nonnull)(MTDatacenterAuthAction * _Nonnull, bool))completion;
 
+- (MTDatacenterTransferAuthAction * _Nonnull)makeTransferAuthAction;
+
 // How long checkIfLoggedOut waits for its probe before giving up without a
 // verdict (120 s). A probe that never ends would otherwise keep the context
 // alive through its connection.

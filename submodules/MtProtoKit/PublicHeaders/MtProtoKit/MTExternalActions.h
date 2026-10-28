@@ -25,6 +25,11 @@
 // MTDatacenterAuthAction.
 @property (atomic, copy) MTDatacenterAuthAction * _Nonnull (^ _Nullable authActionFactory)(MTDatacenterAuthInfoSelector selector, bool isCdn, bool skipBind, void (^ _Nonnull completion)(MTDatacenterAuthAction * _Nonnull, bool));
 
+// Set before the context starts any action, by the network engine that carries its network, and before that
+// engine is activated. While it is set and no factory above is installed, the default actions make no request:
+// each fails at once, so MTContext's backoff asks again through whichever factories are installed by then. Off by default.
+@property (atomic) bool disablesNetworkActions;
+
 @end
 
 // What a subclass of MTDatacenterAuthAction that makes keys elsewhere needs. It

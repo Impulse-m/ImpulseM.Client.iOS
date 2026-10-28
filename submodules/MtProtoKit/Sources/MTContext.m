@@ -59,6 +59,33 @@
 
 @end
 
+// The default key and transfer actions of a context that another engine carries: they make no request and
+// report a failure at once, so MTContext's backoff asks again through the factories installed by then.
+@interface MTNoNetworkDatacenterAuthAction : MTDatacenterAuthAction
+
+@end
+
+@implementation MTNoNetworkDatacenterAuthAction
+
+- (void)execute:(MTContext *)context datacenterId:(NSInteger)datacenterId {
+    [self attachToContext:context datacenterId:datacenterId];
+    [self fail];
+}
+
+@end
+
+@interface MTNoNetworkDatacenterTransferAuthAction : MTDatacenterTransferAuthAction
+
+@end
+
+@implementation MTNoNetworkDatacenterTransferAuthAction
+
+- (void)execute:(__unused MTContext *)context masterDatacenterId:(__unused NSInteger)masterDatacenterId destinationDatacenterId:(__unused NSInteger)destinationDatacenterId authToken:(__unused id)authToken {
+    [self fail];
+}
+
+@end
+
 @interface MTTransportSchemeKey : NSObject<NSCoding, NSCopying>
 
 @property (nonatomic, readonly) NSInteger datacenterId;
@@ -1596,7 +1623,21 @@ static void copyKeychainDictionaryKey(NSString * _Nonnull group, NSString * _Non
     if (authActionFactory != nil) {
         return authActionFactory(selector, isCdn, skipBind, completion);
     }
+    if (self.disablesNetworkActions) {
+        return [[MTNoNetworkDatacenterAuthAction alloc] initWithAuthKeyInfoSelector:selector isCdn:isCdn skipBind:skipBind completion:completion];
+    }
     return [[MTDatacenterAuthAction alloc] initWithAuthKeyInfoSelector:selector isCdn:isCdn skipBind:skipBind completion:completion];
+}
+
+- (MTDatacenterTransferAuthAction *)makeTransferAuthAction {
+    MTDatacenterTransferAuthAction * _Nonnull (^transferAuthActionFactory)(void) = self.transferAuthActionFactory;
+    if (transferAuthActionFactory != nil) {
+        return transferAuthActionFactory();
+    }
+    if (self.disablesNetworkActions) {
+        return [[MTNoNetworkDatacenterTransferAuthAction alloc] init];
+    }
+    return [[MTDatacenterTransferAuthAction alloc] init];
 }
 
 - (void)authInfoForDatacenterWithIdRequired:(NSInteger)datacenterId isCdn:(bool)isCdn selector:(MTDatacenterAuthInfoSelector)selector allowUnboundEphemeralKeys:(bool)allowUnboundEphemeralKeys
@@ -1647,8 +1688,7 @@ static void copyKeychainDictionaryKey(NSString * _Nonnull group, NSString * _Non
         
         if (_datacenterTransferAuthActions[@(datacenterId)] == nil && _datacenterTransferAuthRetryTimers[@(datacenterId)] == nil && masterDatacenterId != datacenterId)
         {
-            MTDatacenterTransferAuthAction * _Nonnull (^transferAuthActionFactory)(void) = self.transferAuthActionFactory;
-            MTDatacenterTransferAuthAction *transferAction = transferAuthActionFactory != nil ? transferAuthActionFactory() : [[MTDatacenterTransferAuthAction alloc] init];
+            MTDatacenterTransferAuthAction *transferAction = [self makeTransferAuthAction];
             transferAction.delegate = self;
             _datacenterTransferAuthActions[@(datacenterId)] = transferAction;
             [transferAction execute:self masterDatacenterId:masterDatacenterId destinationDatacenterId:datacenterId authToken:authToken];
