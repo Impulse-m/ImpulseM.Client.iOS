@@ -53,7 +53,7 @@ import WalletContext
 import WalletSendScreen
 import PasscodeCore
 import LiquidGlassShapes
-import MTProtoRustEngine
+import ImpulseNetworkEngine
 
 #if DEBUG
 import AlertComponent
@@ -685,10 +685,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             deviceModelName: nil,
             useBetaFeatures: !buildConfig.isAppStoreBuild,
             isICloudEnabled: buildConfig.isICloudEnabled,
-            // Only the main app passes a factory: extensions stay on MtProtoKit. Whether the Rust
-            // engine runs is decided per account by resolveNetworkEngine (Debug Settings switch,
-            // mtproto_engine_rust_disabled, the factory's own declines).
-            networkEngineFactory: RustNetworkEngineFactory()
+            // The ImpulseM network engine serves the app and its app extensions alike.
+            networkEngineFactory: ImpulseNetworkEngineFactory()
         )
         
         guard let appGroupUrl = maybeAppGroupUrl else {
