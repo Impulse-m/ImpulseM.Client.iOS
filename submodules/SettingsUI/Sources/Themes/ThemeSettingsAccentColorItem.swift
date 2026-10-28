@@ -389,7 +389,7 @@ private final class ThemeSettingsAccentColorIconItemNode : ListViewItemNode {
                                 topColor = bubbleColor
                                 bottomColor = bubbleColor
                             } else {
-                                fillColor = UIColor(rgb: 0x0088ff)
+                                fillColor = UIColor(rgb: 0x2085DF)
                                 strokeColor = fillColor
                                 topColor = UIColor(rgb: 0xe1ffc7)
                                 bottomColor = topColor
@@ -399,7 +399,7 @@ private final class ThemeSettingsAccentColorIconItemNode : ListViewItemNode {
                                 bottomColor = accentColor.withMultiplied(hue: 1.019, saturation: 0.731, brightness: 0.59)
                                 topColor = bottomColor!.withMultiplied(hue: 0.966, saturation: 0.61, brightness: 0.98)
                             } else {
-                                fillColor = UIColor(rgb: 0x2ea6ff)
+                                fillColor = UIColor(rgb: 0x58AEEE)
                                 strokeColor = fillColor
                                 topColor = UIColor(rgb: 0x466f95)
                                 bottomColor = topColor

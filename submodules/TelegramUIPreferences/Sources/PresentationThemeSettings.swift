@@ -406,7 +406,7 @@ public enum PresentationThemeBaseColor: Int32, CaseIterable {
         let value: UInt32
         switch self {
             case .blue:
-                value = 0x0088ff
+                value = 0x2085DF
             case .cyan:
                 value = 0x00c2ed
             case .green:
@@ -533,7 +533,7 @@ public struct PresentationThemeAccentColor: EnginePostboxCoding, Equatable {
             return UIColor(rgb: UInt32(bitPattern: value))
         } else {
             if baseTheme == .night && self.baseColor == .blue {
-                return UIColor(rgb: 0x3e88f7)
+                return UIColor(rgb: 0x58AEEE)
             } else {
                 return self.baseColor.color
             }

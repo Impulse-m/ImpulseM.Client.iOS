@@ -537,7 +537,7 @@ public func themePickerController(context: AccountContext, focusOnItemTag: Theme
                     effectiveAccentColor = accentColor?.colorFor(baseTheme: (theme).baseTheme)
                 }
                 if reference == .builtin(.night), effectiveAccentColor == nil {
-                    effectiveAccentColor = UIColor(rgb: 0x3e88f7)
+                    effectiveAccentColor = UIColor(rgb: 0x58AEEE)
                 }
                 return (makePresentationTheme(mediaBox: context.sharedContext.accountManager.mediaBox, themeReference: reference, accentColor: effectiveAccentColor, bubbleColors: accentColor?.customBubbleColors ?? [], serviceBackgroundColor: serviceBackgroundColor), wallpaper)
             }
