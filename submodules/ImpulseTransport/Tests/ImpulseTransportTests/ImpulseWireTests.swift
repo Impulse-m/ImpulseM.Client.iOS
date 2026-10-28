@@ -7,14 +7,14 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    private functlEncodedBytes(payload: [UInt8]) throws -> [UInt8] {
+    private func tlEncodedBytes(payload: [UInt8]) throws -> [UInt8] {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         try writer.writeBytes(value: payload)
         return writer.toByteArray()
     }
 
 
-    functestProtoVarint300() throws {
+    func testProtoVarint300() throws {
         var writer: ImpulseProtoWriter = ImpulseProtoWriter()
         writer.writeVarintField(field: 1, value: 300)
         let encoded: [UInt8] = writer.toByteArray()
@@ -29,7 +29,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoNegativeInt32IsSignExtended() throws {
+    func testProtoNegativeInt32IsSignExtended() throws {
         var writer: ImpulseProtoWriter = ImpulseProtoWriter()
         writer.writeInt32Field(field: 1, value: -5)
         let encoded: [UInt8] = writer.toByteArray()
@@ -43,7 +43,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoBytesField() throws {
+    func testProtoBytesField() throws {
         var writer: ImpulseProtoWriter = ImpulseProtoWriter()
         writer.writeBytesField(field: 2, value: [0x61])
         let encoded: [UInt8] = writer.toByteArray()
@@ -58,7 +58,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoFixed64DoubleBits() throws {
+    func testProtoFixed64DoubleBits() throws {
         var writer: ImpulseProtoWriter = ImpulseProtoWriter()
         writer.writeFixed64Field(field: 3, bits: Double(1.5).bitPattern)
         let encoded: [UInt8] = writer.toByteArray()
@@ -72,7 +72,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoPackedVarints() throws {
+    func testProtoPackedVarints() throws {
         var writer: ImpulseProtoWriter = ImpulseProtoWriter()
         writer.writePackedVarints(field: 4, values: [1, 2, 300])
         let encoded: [UInt8] = writer.toByteArray()
@@ -92,7 +92,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoPackedFixed64() throws {
+    func testProtoPackedFixed64() throws {
         var writer: ImpulseProtoWriter = ImpulseProtoWriter()
         writer.writePackedFixed64(field: 5, bitsList: [Double(1.5).bitPattern])
         let encoded: [UInt8] = writer.toByteArray()
@@ -100,7 +100,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestNextSkipsUnreadValues() throws {
+    func testNextSkipsUnreadValues() throws {
         var writer: ImpulseProtoWriter = ImpulseProtoWriter()
         writer.writeVarintField(field: 1, value: 7)
         writer.writeFixed64Field(field: 2, bits: Double(2.5).bitPattern)
@@ -125,7 +125,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoSkipsFixed32Field() throws {
+    func testProtoSkipsFixed32Field() throws {
         let encoded: [UInt8] = [(2 << 3) | 5, 0x01, 0x00, 0x00, 0x00, (3 << 3) | 0, 0x09]
         var reader: ImpulseProtoReader = try ImpulseProtoReader(data: encoded, offset: 0, length: encoded.count)
         let firstField: Bool = try reader.next()
@@ -139,14 +139,14 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoBadBoundsRejected() {
+    func testProtoBadBoundsRejected() {
         XCTAssertThrowsError(try ImpulseProtoReader(data: [1], offset: 0, length: 2)) { (error: Error) in
             XCTAssertEqual(error as? ImpulseWireError, .badBounds)
         }
     }
 
 
-    functestTlBytesSmall() throws {
+    func testTlBytesSmall() throws {
         let encoded: [UInt8] = try tlEncodedBytes(payload: [1, 2, 3])
         XCTAssertEqual(encoded, [0x03, 0x01, 0x02, 0x03])
 
@@ -157,7 +157,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlBytesEmpty() throws {
+    func testTlBytesEmpty() throws {
         let encoded: [UInt8] = try tlEncodedBytes(payload: [])
         XCTAssertEqual(encoded, [0x00, 0x00, 0x00, 0x00])
 
@@ -167,7 +167,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlBytes253() throws {
+    func testTlBytes253() throws {
         let payload: [UInt8] = filled(count: 253, value: 0x11)
         let encoded: [UInt8] = try tlEncodedBytes(payload: payload)
         XCTAssertEqual(encoded.count, 256)
@@ -182,7 +182,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlBytes254UsesLongHeader() throws {
+    func testTlBytes254UsesLongHeader() throws {
         let payload: [UInt8] = filled(count: 254, value: 0x22)
         let encoded: [UInt8] = try tlEncodedBytes(payload: payload)
         XCTAssertEqual(encoded.count, 260)
@@ -197,7 +197,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlScalars() throws {
+    func testTlScalars() throws {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         writer.writeInt32(value: 0x01020304)
         XCTAssertEqual(writer.toByteArray(), [0x04, 0x03, 0x02, 0x01])
@@ -225,7 +225,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlNegativeInt32RoundTrip() throws {
+    func testTlNegativeInt32RoundTrip() throws {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         writer.writeInt32(value: -5)
         let encoded: [UInt8] = writer.toByteArray()
@@ -237,7 +237,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlStringRoundTrip() throws {
+    func testTlStringRoundTrip() throws {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         try writer.writeString(value: "héllo")
         let encoded: [UInt8] = writer.toByteArray()
@@ -248,7 +248,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlRawRoundTrip() throws {
+    func testTlRawRoundTrip() throws {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         writer.writeRaw(value: filled(count: 16, value: 0x11))
         let encoded: [UInt8] = writer.toByteArray()
@@ -259,7 +259,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlPatchInt32() throws {
+    func testTlPatchInt32() throws {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         writer.writeInt32(value: 0)
         writer.writeInt32(value: 0)
@@ -268,7 +268,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlBytesTooLongRejected() {
+    func testTlBytesTooLongRejected() {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         let oversized: [UInt8] = [UInt8](repeating: 0, count: 0x1000000)
         XCTAssertThrowsError(try writer.writeBytes(value: oversized)) { (error: Error) in
@@ -277,7 +277,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoVarintWithElevenContinuationBytesIsMalformed() throws {
+    func testProtoVarintWithElevenContinuationBytesIsMalformed() throws {
         var data: [UInt8] = [UInt8](repeating: 0x80, count: 12)
         data[0] = 0x08
         var reader: ImpulseProtoReader = try ImpulseProtoReader(data: data, offset: 0, length: data.count)
@@ -289,7 +289,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoLengthLargerThanRemainingIsRejected() throws {
+    func testProtoLengthLargerThanRemainingIsRejected() throws {
         let data: [UInt8] = [0x12, 0x05, 1, 2]
         var reader: ImpulseProtoReader = try ImpulseProtoReader(data: data, offset: 0, length: data.count)
         let hasField: Bool = try reader.next()
@@ -300,7 +300,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoWireType3IsRejected() throws {
+    func testProtoWireType3IsRejected() throws {
         let data: [UInt8] = [UInt8((1 << 3) | 3)]
         var reader: ImpulseProtoReader = try ImpulseProtoReader(data: data, offset: 0, length: data.count)
         let hasField: Bool = try reader.next()
@@ -311,7 +311,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoWireType4IsRejected() throws {
+    func testProtoWireType4IsRejected() throws {
         let data: [UInt8] = [UInt8((1 << 3) | 4)]
         var reader: ImpulseProtoReader = try ImpulseProtoReader(data: data, offset: 0, length: data.count)
         let hasField: Bool = try reader.next()
@@ -322,7 +322,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestProtoTruncatedFixed64IsRejected() throws {
+    func testProtoTruncatedFixed64IsRejected() throws {
         let data: [UInt8] = [UInt8((1 << 3) | 1), 1, 2, 3]
         var reader: ImpulseProtoReader = try ImpulseProtoReader(data: data, offset: 0, length: data.count)
         let hasField: Bool = try reader.next()
@@ -333,7 +333,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlTruncatedBytesPayloadIsRejected() throws {
+    func testTlTruncatedBytesPayloadIsRejected() throws {
         let data: [UInt8] = [0x05, 1, 2]
         var reader: ImpulseTlReader = try ImpulseTlReader(data: data, offset: 0, length: data.count)
         XCTAssertThrowsError(try reader.readBytes()) { (error: Error) in
@@ -342,7 +342,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlTruncatedLongHeaderIsRejected() throws {
+    func testTlTruncatedLongHeaderIsRejected() throws {
         let data: [UInt8] = [0xFE, 0x00]
         var reader: ImpulseTlReader = try ImpulseTlReader(data: data, offset: 0, length: data.count)
         XCTAssertThrowsError(try reader.readBytes()) { (error: Error) in
@@ -351,7 +351,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlTruncatedLongPayloadIsRejected() throws {
+    func testTlTruncatedLongPayloadIsRejected() throws {
         let data: [UInt8] = [0xFE, 0xFF, 0x00, 0x00, 1, 2, 3, 4]
         var reader: ImpulseTlReader = try ImpulseTlReader(data: data, offset: 0, length: data.count)
         XCTAssertThrowsError(try reader.readBytes()) { (error: Error) in
@@ -360,7 +360,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlInt64WithSevenBytesIsRejected() throws {
+    func testTlInt64WithSevenBytesIsRejected() throws {
         let data: [UInt8] = [UInt8](repeating: 0, count: 7)
         var reader: ImpulseTlReader = try ImpulseTlReader(data: data, offset: 0, length: data.count)
         XCTAssertThrowsError(try reader.readInt64()) { (error: Error) in
@@ -369,7 +369,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlInt32WithThreeBytesIsRejected() throws {
+    func testTlInt32WithThreeBytesIsRejected() throws {
         let data: [UInt8] = [0, 0, 0]
         var reader: ImpulseTlReader = try ImpulseTlReader(data: data, offset: 0, length: data.count)
         XCTAssertThrowsError(try reader.readInt32()) { (error: Error) in
@@ -378,7 +378,7 @@ final class ImpulseWireTests: XCTestCase {
     }
 
 
-    functestTlPatchOutOfRangeIsRejected() throws {
+    func testTlPatchOutOfRangeIsRejected() throws {
         var writer: ImpulseTlWriter = ImpulseTlWriter()
         writer.writeInt32(value: 0)
         XCTAssertThrowsError(try writer.patchInt32(offset: 2, value: 1)) { (error: Error) in
