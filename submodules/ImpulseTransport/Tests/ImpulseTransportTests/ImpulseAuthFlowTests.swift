@@ -665,7 +665,8 @@ final class ImpulseAuthFlowTests: XCTestCase {
         XCTAssertEqual(carrier.sendCount(), 4)
         XCTAssertEqual(clock.nowSeconds(), 10)
         XCTAssertNil(fixture.storage.stored)
-        XCTAssertFalse(fixture.tokens.hasSession())
+        let hasSession: Bool = await fixture.tokens.hasSession()
+        XCTAssertFalse(hasSession)
         XCTAssertEqual(fixture.pool.mintCount, 2)
         XCTAssertEqual(fixture.identityStore.values[ImpulseIdentityRules.storageKey], fixture.pool.issued[1])
         XCTAssertEqual(
@@ -692,7 +693,8 @@ final class ImpulseAuthFlowTests: XCTestCase {
         _ = try? await signOut.value
 
         XCTAssertNil(fixture.storage.stored)
-        XCTAssertFalse(fixture.tokens.hasSession())
+        let hasSession: Bool = await fixture.tokens.hasSession()
+        XCTAssertFalse(hasSession)
         XCTAssertEqual(fixture.pool.mintCount, 2)
         XCTAssertEqual(fixture.identityStore.values[ImpulseIdentityRules.storageKey], fixture.pool.issued[1])
         XCTAssertEqual(
