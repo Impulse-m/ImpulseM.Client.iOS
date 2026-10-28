@@ -57,14 +57,6 @@ public enum ImpulseTelemetryEncoding {
     /// The field that carries the app name.
     public static let appNameField: String = "app_name"
 
-    private static let saveAppLogId: UInt32 = 0x6f02f748
-    private static let inputAppEventId: UInt32 = 0x1d1b1245
-    private static let jsonObjectId: UInt32 = 0x99c1d49d
-    private static let jsonObjectValueId: UInt32 = 0xc0de1bd9
-    private static let jsonStringId: UInt32 = 0xb71e767a
-    private static let jsonNumberId: UInt32 = 0x2be0dfa4
-    private static let jsonBoolId: UInt32 = 0xc7345e6a
-
 
     /// Serialises `help.saveAppLog(events:)`. Fields are written in key order so the bytes are stable.
     public static func saveAppLogRequest(events: [ImpulseTelemetryEvent]) throws -> [UInt8] {
@@ -79,6 +71,15 @@ public enum ImpulseTelemetryEncoding {
 
         return writer.toByteArray()
     }
+
+
+    private static let saveAppLogId: UInt32 = 0x6f02f748
+    private static let inputAppEventId: UInt32 = 0x1d1b1245
+    private static let jsonObjectId: UInt32 = 0x99c1d49d
+    private static let jsonObjectValueId: UInt32 = 0xc0de1bd9
+    private static let jsonStringId: UInt32 = 0xb71e767a
+    private static let jsonNumberId: UInt32 = 0x2be0dfa4
+    private static let jsonBoolId: UInt32 = 0xc7345e6a
 
 
     private static func writeEvent(
@@ -147,26 +148,6 @@ public actor ImpulseTelemetry {
     public static let maxStringBytes: Int = 512
     public static let maxFieldNameLength: Int = 64
 
-    private static let secretNameFragments: [String] = [
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "credential",
-        "auth",
-        "session",
-        "identity",
-        "hash",
-        "key",
-        "cookie",
-        "bearer",
-    ]
-
-    private let sink: any ImpulseTelemetrySink
-    private let batchLimit: Int
-    private let clock: @Sendable () -> Double
-    private var pending: [ImpulseTelemetryEvent] = []
-
 
     public init(
         sink: any ImpulseTelemetrySink,
@@ -227,6 +208,28 @@ public actor ImpulseTelemetry {
             }
         }
     }
+
+
+    private static let secretNameFragments: [String] = [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "credential",
+        "auth",
+        "session",
+        "identity",
+        "hash",
+        "key",
+        "cookie",
+        "bearer",
+    ]
+
+
+    private let sink: any ImpulseTelemetrySink
+    private let batchLimit: Int
+    private let clock: @Sendable () -> Double
+    private var pending: [ImpulseTelemetryEvent] = []
 
 
     private static func validate(fields: [String: ImpulseTelemetryValue]) throws {
