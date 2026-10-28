@@ -4,22 +4,17 @@ public struct NetworkEngineSettings: Codable, Equatable {
     public var engine: NetworkEngineKind
     
     public static var defaultSettings: NetworkEngineSettings {
-        #if os(macOS)
-        return NetworkEngineSettings(engine: .rust)
-        #else
-        return NetworkEngineSettings(engine: .mtProtoKit)
-        #endif
+        return NetworkEngineSettings(engine: .impulse)
     }
     
     public init(engine: NetworkEngineKind) {
         self.engine = engine
     }
     
+    /// `.impulse` is the only selectable engine, so a stored value of an older engine (`rust`,
+    /// `mtProtoKit`), a missing value and an unknown value all decode as `.impulse`.
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: StringCodingKey.self)
-        
-        let rawValue = try? container.decode(String.self, forKey: "engine_v2")
-        self.engine = rawValue.flatMap(NetworkEngineKind.init(rawValue:)) ?? NetworkEngineSettings.defaultSettings.engine
+        self.engine = NetworkEngineSettings.defaultSettings.engine
     }
     
     public func encode(to encoder: Encoder) throws {
