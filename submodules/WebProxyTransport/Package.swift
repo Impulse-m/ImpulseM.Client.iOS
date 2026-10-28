@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "WebProxyTransport",
-    platforms: [.macOS(.v10_13)],
+    platforms: [.macOS(.v12)],
     products: [
         .library(name: "WebProxyTransport", targets: ["WebProxyTransport"])
     ],

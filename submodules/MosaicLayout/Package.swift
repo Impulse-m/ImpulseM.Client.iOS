@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MosaicLayout",
-    platforms: [.iOS(.v13), .macOS(.v10_13)],
+    platforms: [.iOS(.v13), .macOS(.v12)],
     products: [
         .library(name: "MosaicLayout", targets: ["MosaicLayout"]),
     ],

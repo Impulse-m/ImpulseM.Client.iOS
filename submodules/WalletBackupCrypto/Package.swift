@@ -9,7 +9,7 @@ let tde2eIncludeRoot = iosRoot.appendingPathComponent("third-party/td/td/tde2e")
 
 let package = Package(
     name: "WalletBackupCrypto",
-    platforms: [.macOS(.v10_13)],
+    platforms: [.macOS(.v12)],
     products: [
         .library(
             name: "WalletBackupCrypto",

@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "TelegramApi",
-    platforms: [.macOS(.v10_13)],
+    platforms: [.macOS(.v12)],
     products: [
         .library(name: "TelegramApi", targets: ["TelegramApi"]),
     ],
