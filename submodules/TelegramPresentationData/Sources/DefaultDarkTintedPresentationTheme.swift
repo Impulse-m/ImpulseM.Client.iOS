@@ -3,7 +3,7 @@ import UIKit
 import TelegramCore
 import TelegramUIPreferences
 
-private let defaultDarkTintedAccentColor = UIColor(rgb: 0x2ea6ff)
+private let defaultDarkTintedAccentColor = UIColor(rgb: 0x58AEEE)
 public let defaultDarkTintedPresentationTheme = makeDefaultDarkTintedPresentationTheme(preview: false)
 
 private extension PresentationThemeBaseColor {
