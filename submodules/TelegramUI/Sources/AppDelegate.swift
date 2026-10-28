@@ -59,11 +59,6 @@ import MTProtoRustEngine
 import AlertComponent
 #endif
 
-#if canImport(AppCenter)
-import AppCenter
-import AppCenterCrashes
-#endif
-
 private let handleVoipNotifications = false
 
 private func isTonTransferUrl(_ url: URL) -> Bool {
@@ -941,7 +936,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             }
         }, openAppStorePage: {
             let appStoreId = buildConfig.appStoreId
-            if let url = URL(string: "itms-apps://itunes.apple.com/app/id\(appStoreId)") {
+            if appStoreId != 0, let url = URL(string: "itms-apps://itunes.apple.com/app/id\(appStoreId)") {
                 UIApplication.shared.open(url, options: [:], completionHandler: nil)
             }
         }, openSubscriptions: {
@@ -1014,10 +1009,6 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                 if buildConfig.isInternalBuild {
                     icons.append(PresentationAppIcon(name: "WhiteFilledIcon", imageName: "WhiteFilledIcon"))
                 }
-                
-                icons.append(PresentationAppIcon(name: "Premium", imageName: "Premium", isPremium: true))
-                icons.append(PresentationAppIcon(name: "PremiumTurbo", imageName: "PremiumTurbo", isPremium: true))
-                icons.append(PresentationAppIcon(name: "PremiumBlack", imageName: "PremiumBlack", isPremium: true))
                 
                 return icons
             } else {
@@ -1629,14 +1620,6 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         
         self.maybeCheckForUpdates()
 
-        #if canImport(AppCenter)
-        if !buildConfig.isAppStoreBuild, let appCenterId = buildConfig.appCenterId, !appCenterId.isEmpty {
-            AppCenter.start(withAppSecret: buildConfig.appCenterId, services: [
-                Crashes.self
-            ])
-        }
-        #endif
-        
         if #available(iOS 13.0, *) {
             let cleanupTaskId = "\(baseAppBundleId).cleanup"
             
