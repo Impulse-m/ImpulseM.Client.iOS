@@ -11,7 +11,8 @@ import WalletContext
 
 private let baseTelegramMePaths = [
     "telegram.me",
-    "t.me", "telegram.dog"
+    "t.me", "telegram.dog",
+    "o.impulsem.net", "impulsem.net"
 ]
 private let telegramWebShortLinkHosts = [
     "a.t.me", 
