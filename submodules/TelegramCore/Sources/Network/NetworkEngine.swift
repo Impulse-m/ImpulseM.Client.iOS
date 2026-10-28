@@ -253,8 +253,7 @@ public protocol NetworkEngineSession: AnyObject {
     /// Calls `observer` whenever the engine gives up on one of the session's connections. Engines
     /// that cannot tell why need not call it.
     func observeConnectionDrops(_ observer: @escaping (NetworkEngineConnectionDrop) -> Void)
-    /// What the session heard from the server lately, for the local health check
-    /// (`NetworkLivenessMonitor`); nil from engines that do not tell, which the check never judges.
+    /// What the session heard from the server lately; nil from engines that do not tell.
     func serverActivity(_ reply: @escaping (NetworkEngineServerActivity?) -> Void)
 }
 
@@ -380,14 +379,13 @@ public extension NetworkEngine {
     }
 }
 
-/// Supplies an alternative engine. Passed through `NetworkInitializationArguments`, so a process
-/// that does not pass one (extensions) stays on MtProtoKit.
+/// Supplies the network engine. Passed through `NetworkInitializationArguments`; a process that does not
+/// pass one cannot start its network.
 public protocol NetworkEngineFactory {
-    /// Returns nil when the engine cannot serve this context (for example an unsupported proxy
-    /// configuration); the network then uses MtProtoKit. The TCP connection factory to use is
-    /// `context.makeTcpConnectionInterface`, which changes when the proxy changes.
+    /// Returns nil when the engine cannot serve this context; the network then cannot start. The TCP
+    /// connection factory to use is `context.makeTcpConnectionInterface`, which changes when the proxy changes.
     func makeEngine(context: MTContext, isAppExtension: Bool) -> NetworkEngine?
-    /// The engine carries WEB proxies itself; otherwise the network moves to MtProtoKit while one is on.
+    /// The engine carries WEB proxies itself.
     var supportsWebProxy: Bool { get }
 }
 

@@ -1,14 +1,9 @@
 import Foundation
-import WebProxyTransport
 import Postbox
 internal import TelegramApi
 import SwiftSignalKit
 import MtProtoKit
 import NetworkLogging
-
-#if os(iOS)
-    import CloudData
-#endif
 
 import EncryptionProvider
 
@@ -401,107 +396,31 @@ public struct NetworkInitializationArguments {
         self.networkEngineFactory = networkEngineFactory
     }
 }
-#if os(iOS)
-private let cloudDataContext = Atomic<CloudDataContext?>(value: nil)
-#endif
 
-func networkEngineRustDisabled(appConfiguration: AppConfiguration) -> Bool {
-    guard let data = appConfiguration.data, let value = data["mtproto_engine_rust_disabled"] else {
-        return false
-    }
-    switch value {
-    case let value as Bool:
-        return value
-    case let value as Double:
-        return value != 0.0
-    case let value as String:
-        return !["", "0", "false", "no"].contains(value.lowercased())
-    case is NSNull:
-        return false
-    default:
-        return true
-    }
-}
-
-/// What an account's app configuration says about the Rust engine; nil while it was never fetched.
-func networkEngineServerFlag(appConfiguration: AppConfiguration) -> Bool? {
-    if appConfiguration.data == nil {
-        return nil
-    }
-    return networkEngineRustDisabled(appConfiguration: appConfiguration)
-}
-
-/// Why the Rust engine may not run for this network, nil when it may: the account's own app
-/// configuration, or while it has none (a login, a fresh account) what other accounts got from the
-/// server; and the local crash-loop fallback.
-func networkEngineRustDisabledReason(appConfiguration: AppConfiguration, engineState: NetworkEngineState?, appVersion: String, timestamp: Int32) -> String? {
-    let build = networkEngineStateBuild(appVersion: appVersion)
-    if let rustDisabled = networkEngineServerFlag(appConfiguration: appConfiguration) {
-        if rustDisabled {
-            return "mtproto_engine_rust_disabled"
-        }
-    } else if let engineState = engineState, engineState.serverDisabledRust(build: build) {
-        return "mtproto_engine_rust_disabled for another account"
-    }
-    if let engineState = engineState, engineState.locallyDisabledRust(build: build, timestamp: timestamp) {
-        return "engine crash loop"
-    }
-    return nil
-}
-
-private func resolveNetworkEngine(accountId: AccountRecordId, context: MTContext, factory: NetworkEngineFactory?, settings: NetworkEngineSettings?, rustDisabledReason: String?, isAppExtension: Bool) -> NetworkEngine {
-    let preferredEngine = settings?.engine ?? NetworkEngineSettings.defaultSettings.engine
+/// The network engine of an account. There is no fallback: a missing factory or a factory that declines
+/// the context is a configuration error and stops the process.
+private func resolveNetworkEngine(accountId: AccountRecordId, context: MTContext, factory: NetworkEngineFactory?, isAppExtension: Bool) -> NetworkEngine {
     guard let factory = factory else {
-        Logger.shared.log("Network", "Account \(accountId.int64): engine mtProtoKit (no factory, preferred \(preferredEngine.rawValue))")
-        return MtProtoKitEngine(context: context)
+        Logger.shared.log("Network", "Account \(accountId.int64): no network engine factory")
+        fatalError("Account \(accountId.int64): no network engine factory")
     }
-    if let rustDisabledReason = rustDisabledReason {
-        Logger.shared.log("Network", "Account \(accountId.int64): engine mtProtoKit (\(rustDisabledReason), preferred \(preferredEngine.rawValue))")
-        return MtProtoKitEngine(context: context)
+    guard let engine = factory.makeEngine(context: context, isAppExtension: isAppExtension) else {
+        Logger.shared.log("Network", "Account \(accountId.int64): the network engine factory declined the context")
+        fatalError("Account \(accountId.int64): the network engine factory declined the context")
     }
-    switch preferredEngine {
-    case .mtProtoKit:
-        Logger.shared.log("Network", "Account \(accountId.int64): engine mtProtoKit")
-        return MtProtoKitEngine(context: context)
-    case .rust, .impulse:
-        if let engine = factory.makeEngine(context: context, isAppExtension: isAppExtension) {
-            Logger.shared.log("Network", "Account \(accountId.int64): engine \(engine.kind.rawValue)")
-            return engine
-        } else {
-            Logger.shared.log("Network", "Account \(accountId.int64): engine mtProtoKit (factory declined \(preferredEngine.rawValue))")
-            return MtProtoKitEngine(context: context)
-        }
-    }
+    Logger.shared.log("Network", "Account \(accountId.int64): engine \(engine.kind.rawValue)")
+    return engine
 }
 
 private final class NetworkMainSessionDelegate: NetworkEngineSessionDelegate {
     private weak var connectionStatus: Promise<ConnectionStatus>?
     weak var network: Network?
-    private let livenessLock = NSLock()
-    private var lastState: NetworkEngineConnectionState?
-    private weak var livenessMonitor: NetworkLivenessMonitor?
-    
+
     init(connectionStatus: Promise<ConnectionStatus>) {
         self.connectionStatus = connectionStatus
     }
-    
-    /// The monitor hears every state from now on, starting with the latest one.
-    func attach(_ monitor: NetworkLivenessMonitor) {
-        self.livenessLock.lock()
-        self.livenessMonitor = monitor
-        let state = self.lastState
-        self.livenessLock.unlock()
-        if let state = state {
-            monitor.connectionStateChanged(state)
-        }
-    }
-    
+
     func networkSessionConnectionStateChanged(_ state: NetworkEngineConnectionState) {
-        self.livenessLock.lock()
-        self.lastState = state
-        let monitor = self.livenessMonitor
-        self.livenessLock.unlock()
-        monitor?.connectionStateChanged(state)
         let connectionStatus = self.connectionStatus
         if state.isConnected {
             if state.isUpdatingConnectionContext || state.isPerformingServiceTasks {
@@ -598,68 +517,10 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
                 }
             }
 
-            let baseTcpConnectionInterfaceFactory = context.makeTcpConnectionInterface
             let isAppExtension = Bundle.main.bundlePath.hasSuffix(".appex")
-            let initialActiveServer = proxySettings?.effectiveActiveServer
-            let initialWebProxyConfiguration = initialActiveServer?.webProxyConfiguration
-            WebProxyTransport.shared.apply(configuration: isAppExtension ? nil : initialWebProxyConfiguration)
-            if initialActiveServer?.isWebProxy == true {
-                context.makeTcpConnectionInterface = { delegate, delegateQueue in
-                    return WebProxyTransport.shared.makeConnectionInterface(delegate: delegate, delegateQueue: delegateQueue)
-                }
-            }
-            
-            let seedAddressList: [Int: [String]]
-            
-            if testingEnvironment {
-                seedAddressList = [
-                    1: ["149.154.175.10"],
-                    2: ["149.154.167.40"],
-                    3: ["149.154.175.117"]
-                ]
-            } else {
-                seedAddressList = [
-                    1: ["149.154.175.50", "2001:b28:f23d:f001::a"],
-                    2: ["149.154.167.50", "95.161.76.100", "2001:67c:4e8:f002::a"],
-                    3: ["149.154.175.100", "2001:b28:f23d:f003::a"],
-                    4: ["149.154.167.91", "2001:67c:4e8:f004::a"],
-                    5: ["149.154.171.5", "2001:b28:f23f:f005::a"]
-                ]
-            }
-            
-            for (id, ips) in seedAddressList {
-                context.setSeedAddressSetForDatacenterWithId(id, seedAddressSet: MTDatacenterAddressSet(addressList: ips.map { MTDatacenterAddress(ip: $0, port: 443, preferForMedia: false, restrictToTcp: false, cdn: false, preferForProxy: false, secret: nil) }))
-            }
-            
+
             context.keychain = keychain
-            var wrappedAdditionalSource: MTSignal?
-            #if os(iOS)
-            if #available(iOS 10.0, *), !supplementary, arguments.isICloudEnabled {
-                var cloudDataContextValue: CloudDataContext?
-                if let value = cloudDataContext.with({ $0 }) {
-                    cloudDataContextValue = value
-                } else {
-                    cloudDataContextValue = makeCloudDataContext(encryptionProvider: arguments.encryptionProvider)
-                    let _ = cloudDataContext.swap(cloudDataContextValue)
-                }
-                
-                if let cloudDataContext = cloudDataContextValue {
-                    wrappedAdditionalSource = MTSignal(generator: { subscriber in
-                        let disposable = cloudDataContext.get(phoneNumber: .single(phoneNumber)).start(next: { value in
-                            subscriber?.putNext(value)
-                        }, completed: {
-                            subscriber?.putCompletion()
-                        })
-                        return MTBlockDisposable(block: {
-                            disposable.dispose()
-                        })
-                    })
-                }
-            }
-            #endif
-            
             if !supplementary {
-                context.setDiscoverBackupAddressListSignal(MTBackupAddressSignals.fetchBackupIps(testingEnvironment, currentContext: context, additionalSource: wrappedAdditionalSource, phoneNumber: phoneNumber, mainDatacenterId: datacenterId))
                 let externalRequestVerificationStream = arguments.externalRequestVerificationStream
                 context.setExternalRequestVerification({ nonce in
                     return MTSignal(generator: { subscriber in
@@ -697,33 +558,8 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
                 })
             }
             
-            /*#if DEBUG
-            context.beginExplicitBackupAddressDiscovery()
-            #endif*/
-            
-            var rustDisabledReason = networkEngineRustDisabledReason(appConfiguration: appConfiguration, engineState: networkEngine.state, appVersion: arguments.appVersion, timestamp: Int32(Date().timeIntervalSince1970))
-            #if os(macOS)
-            if rustDisabledReason == nil {
-                rustDisabledReason = networkLivenessDisabledReason()
-            }
-            #endif
-            let resolvedEngine = resolveNetworkEngine(accountId: accountId, context: context, factory: arguments.networkEngineFactory, settings: networkEngine.settings, rustDisabledReason: rustDisabledReason, isAppExtension: isAppExtension)
+            let resolvedEngine = resolveNetworkEngine(accountId: accountId, context: context, factory: arguments.networkEngineFactory, isAppExtension: isAppExtension)
             resolvedEngine.activate()
-            let rustEngineDisabled = rustDisabledReason != nil
-            // Live engine switching (the server kill switch, a WEB proxy turned on and off) is macOS only.
-            // On iOS the engine changes only through the Debug Settings switch, at the next launch: no
-            // wrapper is created, so switchEngine/disableRustEngine have nothing to act on and the
-            // network runs the resolved engine directly, exactly as without a factory.
-            #if os(macOS)
-            let prefersRustEngine = (networkEngine.settings?.engine ?? NetworkEngineSettings.defaultSettings.engine) == .rust
-            let rustEngineWaitsForWebProxy = arguments.networkEngineFactory != nil && !rustEngineDisabled && resolvedEngine.kind == .mtProtoKit && prefersRustEngine && initialActiveServer?.isWebProxy == true && arguments.networkEngineFactory?.supportsWebProxy != true
-            // Live switching only ever moves a network off Rust, or back to Rust after a WEB proxy, so it
-            // is needed only while Rust is in play; otherwise MtProtoKit runs directly.
-            let switchingEngine = arguments.networkEngineFactory != nil && (resolvedEngine.kind == .rust || rustEngineWaitsForWebProxy) ? SwitchingNetworkEngine(engine: resolvedEngine) : nil
-            #else
-            let rustEngineWaitsForWebProxy = false
-            let switchingEngine: SwitchingNetworkEngine? = nil
-            #endif
             let telemetryDirectory = basePath + "/network-telemetry"
             let telemetryConfiguration = NetworkTelemetryConfiguration.with(appConfiguration: appConfiguration)
             let telemetry: NetworkTelemetry?
@@ -737,7 +573,7 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
                     }
                 }
             }
-            let engine: NetworkEngine = telemetry.flatMap { RecordingNetworkEngine(engine: switchingEngine ?? resolvedEngine, telemetry: $0) } ?? switchingEngine ?? resolvedEngine
+            let engine: NetworkEngine = telemetry.flatMap { RecordingNetworkEngine(engine: resolvedEngine, telemetry: $0) } ?? resolvedEngine
             
             let connectionStatus = Promise<ConnectionStatus>(.waitingForNetwork)
             
@@ -749,7 +585,7 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
                 useExperimentalFeatures = false
             }
             
-            let network = Network(queue: queue, datacenterId: datacenterId, context: context, engine: engine, switchingEngine: switchingEngine, engineFactory: arguments.networkEngineFactory, rustEngineDisabled: rustEngineDisabled, rustEngineWaitsForWebProxy: rustEngineWaitsForWebProxy, mainSession: mainSession, mainSessionDelegate: mainSessionDelegate, telemetry: telemetry, _connectionStatus: connectionStatus, basePath: basePath, appDataDisposable: appDataDisposable, encryptionProvider: arguments.encryptionProvider, useRequestTimeoutTimers: useRequestTimeoutTimers, useBetaFeatures: arguments.useBetaFeatures, useExperimentalFeatures: useExperimentalFeatures, baseTcpConnectionInterfaceFactory: baseTcpConnectionInterfaceFactory, isAppExtension: isAppExtension, initialWebProxyActive: initialActiveServer?.isWebProxy == true)
+            let network = Network(queue: queue, datacenterId: datacenterId, context: context, engine: engine, mainSession: mainSession, mainSessionDelegate: mainSessionDelegate, telemetry: telemetry, _connectionStatus: connectionStatus, basePath: basePath, appDataDisposable: appDataDisposable, encryptionProvider: arguments.encryptionProvider, useRequestTimeoutTimers: useRequestTimeoutTimers, useBetaFeatures: arguments.useBetaFeatures, useExperimentalFeatures: useExperimentalFeatures)
             
             if let data = appConfiguration.data, let notifyInterval = data["upload_premium_speedup_notify_period"] as? Double {
                 network.updateNetworkSpeedLimitedEventNotifyInterval(value: notifyInterval)
@@ -911,10 +747,6 @@ public final class Network: NSObject {
     public let context: MTContext
     private var networkHelper: NetworkHelper?
     private let engine: NetworkEngine
-    private let switchingEngine: SwitchingNetworkEngine?
-    private let engineFactory: NetworkEngineFactory?
-    private let rustEngineDisabled: Atomic<Bool>
-    private let rustEngineWaitsForWebProxy: Atomic<Bool>
     let mainSession: NetworkEngineSession
     let requestService: NetworkEngineRequestService
     let basePath: String
@@ -923,13 +755,6 @@ public final class Network: NSObject {
     /// `network_telemetry_enabled` was set when the network started (always set in Debug builds).
     public let telemetry: NetworkTelemetry?
     private let useRequestTimeoutTimers: Bool
-    private let baseTcpConnectionInterfaceFactory: ((MTTcpConnectionInterfaceDelegate, DispatchQueue) -> MTTcpConnectionInterface)?
-    private let isAppExtension: Bool
-    private let webProxyLeaseToken = UUID()
-    private let webProxyActive: ValuePromise<Bool>
-    private let webProxyCarrierDemandDisposable = MetaDisposable()
-    /// macOS, Rust with live switching: the local health check (`NetworkLivenessMonitor`).
-    private var livenessMonitor: NetworkLivenessMonitor?
     public let useBetaFeatures: Bool
     public let useExperimentalFeatures: Bool
     
@@ -995,7 +820,7 @@ public final class Network: NSObject {
         return self.engine.kind
     }
     
-    fileprivate init(queue: Queue, datacenterId: Int, context: MTContext, engine: NetworkEngine, switchingEngine: SwitchingNetworkEngine?, engineFactory: NetworkEngineFactory?, rustEngineDisabled: Bool, rustEngineWaitsForWebProxy: Bool, mainSession: NetworkEngineSession, mainSessionDelegate: NetworkMainSessionDelegate, telemetry: NetworkTelemetry?, _connectionStatus: Promise<ConnectionStatus>, basePath: String, appDataDisposable: Disposable, encryptionProvider: EncryptionProvider, useRequestTimeoutTimers: Bool, useBetaFeatures: Bool, useExperimentalFeatures: Bool, baseTcpConnectionInterfaceFactory: ((MTTcpConnectionInterfaceDelegate, DispatchQueue) -> MTTcpConnectionInterface)?, isAppExtension: Bool, initialWebProxyActive: Bool) {
+    fileprivate init(queue: Queue, datacenterId: Int, context: MTContext, engine: NetworkEngine, mainSession: NetworkEngineSession, mainSessionDelegate: NetworkMainSessionDelegate, telemetry: NetworkTelemetry?, _connectionStatus: Promise<ConnectionStatus>, basePath: String, appDataDisposable: Disposable, encryptionProvider: EncryptionProvider, useRequestTimeoutTimers: Bool, useBetaFeatures: Bool, useExperimentalFeatures: Bool) {
         self.encryptionProvider = encryptionProvider
         
         self.queue = queue
@@ -1003,10 +828,6 @@ public final class Network: NSObject {
         self.context = context
         self._contextProxyId = ValuePromise((context.apiEnvironment.socksProxySettings as MTSocksProxySettings?).flatMap(NetworkContextProxyId.init(settings:)), ignoreRepeated: true)
         self.engine = engine
-        self.switchingEngine = switchingEngine
-        self.engineFactory = engineFactory
-        self.rustEngineDisabled = Atomic(value: rustEngineDisabled)
-        self.rustEngineWaitsForWebProxy = Atomic(value: rustEngineWaitsForWebProxy)
         self.mainSession = mainSession
         self.requestService = mainSession.requestService
         self.mainSessionDelegate = mainSessionDelegate
@@ -1015,9 +836,6 @@ public final class Network: NSObject {
         self.appDataDisposable = appDataDisposable
         self.basePath = basePath
         self.useRequestTimeoutTimers = useRequestTimeoutTimers
-        self.baseTcpConnectionInterfaceFactory = baseTcpConnectionInterfaceFactory
-        self.isAppExtension = isAppExtension
-        self.webProxyActive = ValuePromise<Bool>(initialWebProxyActive, ignoreRepeated: true)
         self.useBetaFeatures = useBetaFeatures
         self.useExperimentalFeatures = useExperimentalFeatures
         
@@ -1075,8 +893,7 @@ public final class Network: NSObject {
         self.networkHelper = networkHelper
         context.add(networkHelper)
         
-        let fastDownloads = engine.kind == .rust
-        self._multiplexedRequestManager = MultiplexedRequestManager(cdnMaxRequestsPerWorker: fastDownloads ? 4 : 3, cdnMaxWorkersPerTarget: fastDownloads ? 8 : 4, takeWorker: { [weak self] target, tag, continueInBackground in
+        self._multiplexedRequestManager = MultiplexedRequestManager(cdnMaxRequestsPerWorker: 3, cdnMaxWorkersPerTarget: 4, takeWorker: { [weak self] target, tag, continueInBackground in
             if let strongSelf = self {
                 let datacenterId: Int
                 let isCdn: Bool
@@ -1098,54 +915,10 @@ public final class Network: NSObject {
             return nil
         })
         
-        #if os(macOS)
-        if let switchingEngine = switchingEngine, !isAppExtension {
-            let monitor = NetworkLivenessMonitor(queue: queue, datacenterId: datacenterId, dependencies: NetworkLivenessMonitor.Dependencies(
-                clock: networkLivenessUptime,
-                activity: { [weak mainSession] reply in
-                    guard let mainSession = mainSession else {
-                        reply(nil)
-                        return
-                    }
-                    mainSession.serverActivity(reply)
-                },
-                engineKind: { [weak switchingEngine] in
-                    return switchingEngine?.kind ?? .mtProtoKit
-                },
-                networkIdentity: { [weak switchingEngine] in
-                    return switchingEngine?.networkIdentity()
-                },
-                probeUnavailable: { [weak context] in
-                    return context?.apiEnvironment.socksProxySettings?.webProxy == true ? "a WEB proxy, which MtProtoKit's probe cannot use" : nil
-                },
-                probe: { [weak context] timeout in
-                    guard let context = context else {
-                        return .single(false)
-                    }
-                    return networkLivenessMtProtoKitProbe(context: context, datacenterId: datacenterId, timeout: timeout)
-                },
-                report: { [weak telemetry] report in
-                    telemetry?.engineFallback(report, engine: .rust)
-                },
-                switchToMtProtoKit: { [weak self] reason in
-                    self?.disableRustEngine(reason: reason)
-                },
-                limiter: NetworkLivenessProbeLimiter.shared
-            ))
-            self.livenessMonitor = monitor
-            mainSession.observeConnectionDrops { [weak monitor] drop in
-                monitor?.connectionDropped(drop)
-            }
-            mainSessionDelegate.attach(monitor)
-            monitor.start()
-        }
-        #endif
-
         let shouldKeepConnectionSignal = self.shouldKeepConnection.get()
         |> distinctUntilChanged |> deliverOn(queue)
         self.shouldKeepConnectionDisposable.set(shouldKeepConnectionSignal.start(next: { [weak self] value in
             if let strongSelf = self {
-                strongSelf.livenessMonitor?.setResumed(value)
                 if value {
                     Logger.shared.log("Network", "Resume network connection")
                     strongSelf.mainSession.setPaused(false)
@@ -1159,36 +932,9 @@ public final class Network: NSObject {
         self.isUserOnlineDisposable.set((self.isUserOnline.get() |> distinctUntilChanged |> deliverOn(queue)).start(next: { [weak self] value in
             self?.mainSession.setOnline(value)
         }))
-
-        // The carrier runs exactly while MTProto does. SharedWakeupManager already folds
-        // foreground state, audio sessions, background extensions, processing tasks and the
-        // explicit-extension grace timer into shouldBeServiceTaskMaster, which reaches us as
-        // shouldKeepConnection - so riding it inherits every grace window that machinery
-        // implements, without a background mode or a timer of our own.
-        let webProxyCarrierDemand = combineLatest(queue: queue, self.webProxyActive.get(), self.shouldKeepConnection.get())
-        |> map { active, keepConnection -> Bool in
-            return active && keepConnection
-        }
-        |> distinctUntilChanged
-        let leaseToken = self.webProxyLeaseToken
-        let leaseIsAppExtension = self.isAppExtension
-        self.webProxyCarrierDemandDisposable.set(webProxyCarrierDemand.start(next: { wanted in
-            WebProxyTransport.shared.setCarrierDemand(leaseToken, wanted: wanted && !leaseIsAppExtension)
-        }))
     }
 
     func updateProxySettings(_ activeServer: ProxyServerSettings?) {
-        let webConfiguration = activeServer?.webProxyConfiguration
-        WebProxyTransport.shared.apply(configuration: self.isAppExtension ? nil : webConfiguration)
-        self.webProxyActive.set(activeServer?.isWebProxy == true)
-        if activeServer?.isWebProxy == true {
-            self.context.makeTcpConnectionInterface = { delegate, delegateQueue in
-                return WebProxyTransport.shared.makeConnectionInterface(delegate: delegate, delegateQueue: delegateQueue)
-            }
-        } else {
-            self.context.makeTcpConnectionInterface = self.baseTcpConnectionInterfaceFactory
-        }
-
         let updated = activeServer?.mtProxySettings
         self.context.updateApiEnvironment { environment in
             let current = environment?.socksProxySettings
@@ -1205,21 +951,11 @@ public final class Network: NSObject {
                 return nil
             }
         }
-        if activeServer?.isWebProxy == true {
-            if self.engineKind == .rust && self.engineFactory?.supportsWebProxy != true && self.switchEngine(to: .mtProtoKit, reason: "WEB proxy") {
-                let _ = self.rustEngineWaitsForWebProxy.swap(true)
-            }
-        } else if self.rustEngineWaitsForWebProxy.swap(false) {
-            self.switchEngine(to: .rust, reason: "WEB proxy turned off")
-        }
     }
-    
+
     deinit {
-        self.livenessMonitor?.stop()
         self.shouldKeepConnectionDisposable.dispose()
         self.isUserOnlineDisposable.dispose()
-        self.webProxyCarrierDemandDisposable.dispose()
-        WebProxyTransport.shared.setCarrierDemand(self.webProxyLeaseToken, wanted: false)
         self.appDataDisposable.dispose()
     }
     
@@ -1241,45 +977,6 @@ public final class Network: NSObject {
         }
     }
     
-    public var isRustEngineDisabled: Bool {
-        return self.rustEngineDisabled.with { $0 }
-    }
-
-    public func disableRustEngine(reason: String) {
-        let _ = self.rustEngineDisabled.swap(true)
-        let _ = self.rustEngineWaitsForWebProxy.swap(false)
-        self.switchEngine(to: .mtProtoKit, reason: reason)
-    }
-
-    @discardableResult
-    public func switchEngine(to kind: NetworkEngineKind, reason: String) -> Bool {
-        guard let switchingEngine = self.switchingEngine else {
-            return kind == self.engine.kind
-        }
-        if kind == .rust && self.rustEngineDisabled.with({ $0 }) {
-            Logger.shared.log("Network", "Engine switch to rust refused, the server disabled it: \(reason)")
-            return false
-        }
-        let context = self.context
-        let engineFactory = self.engineFactory
-        let isAppExtension = self.isAppExtension
-        return switchingEngine.switchEngine(to: kind, drainTimeout: 5.0, makeEngine: {
-            let replacement: NetworkEngine?
-            switch kind {
-            case .mtProtoKit:
-                replacement = MtProtoKitEngine(context: context)
-            case .rust, .impulse:
-                replacement = engineFactory?.makeEngine(context: context, isAppExtension: isAppExtension)
-            }
-            if replacement == nil {
-                Logger.shared.log("Network", "Engine switch to \(kind.rawValue) declined: \(reason)")
-            } else {
-                Logger.shared.log("Network", "Switching the engine to \(kind.rawValue): \(reason)")
-            }
-            return replacement
-        })
-    }
-
     fileprivate func mainSessionAuthorizationRequired() {
         Logger.shared.log("Network", "requestMessageServiceAuthorizationRequired")
         self.loggedOut?()
@@ -1579,12 +1276,3 @@ class Keychain: NSObject, MTKeychain {
         self.remove(group + ":" + aKey)
     }
 }
-#if os(iOS)
-func makeCloudDataContext(encryptionProvider: EncryptionProvider) -> CloudDataContext? {
-    if #available(iOS 10.0, *) {
-        return CloudDataContextImpl(encryptionProvider: encryptionProvider)
-    } else {
-        return nil
-    }
-}
-#endif

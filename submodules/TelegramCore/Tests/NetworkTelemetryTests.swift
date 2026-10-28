@@ -799,28 +799,6 @@ final class NetworkTelemetryTests: XCTestCase {
         XCTAssertEqual(report.current.layer, 214)
     }
 
-    func testRequestsCountUnderTheEngineTheyStartOn() {
-        let clock = TestClock()
-        let telemetry = NetworkTelemetry(directory: nil, layer: 214, app: "a", system: "s", variant: nil, watchEvery: 1, clock: { clock.now }, wallClock: { clock.wallNow })
-        let mtProtoKit = FakeEngine(kind: .mtProtoKit)
-        let rust = FakeEngine(kind: .rust)
-        let switching = SwitchingNetworkEngine(engine: mtProtoKit)
-        let engine = RecordingNetworkEngine(engine: switching, telemetry: telemetry)
-        let session = engine.makeSession(datacenterId: 2, role: .main, usageCalculationInfo: nil, delegate: nil)
-        let first = getConfigRequest()
-        let _ = session.requestService.add(first)
-        XCTAssertTrue(switching.switchEngine(to: .rust, drainTimeout: 3600.0, makeEngine: { rust }))
-        let second = getConfigRequest()
-        let _ = session.requestService.add(second)
-        XCTAssertTrue(rust.sessions.first?.service.pending.first === second)
-        mtProtoKit.sessions[0].service.succeed(first)
-        rust.sessions[0].service.succeed(second)
-
-        let report = telemetry.makeReport(maxFailures: 0)
-        XCTAssertEqual(summary(report, engine: "mtProtoKit", role: .main, method: "help.getConfig")?.count, 1)
-        XCTAssertEqual(summary(report, engine: "rust", role: .main, method: "help.getConfig")?.count, 1)
-    }
-
     func testConnectionSummary() {
         let h = Harness()
         h.connection(.waitingForNetwork)

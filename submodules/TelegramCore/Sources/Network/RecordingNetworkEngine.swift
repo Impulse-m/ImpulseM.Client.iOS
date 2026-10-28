@@ -141,8 +141,6 @@ private final class RecordingNetworkEngineSession: NetworkEngineSession {
 private final class RecordingRequestService: NetworkEngineRequestService {
     private let service: NetworkEngineRequestService
     private let fixedKind: NetworkEngineKind
-    /// Set when the engine can switch, so that a request is attributed to the engine it starts on.
-    private weak var switchingEngine: SwitchingNetworkEngine?
     private let role: NetworkTelemetryRole
     private let datacenterId: Int
     private let telemetry: NetworkTelemetry
@@ -150,7 +148,6 @@ private final class RecordingRequestService: NetworkEngineRequestService {
     init(service: NetworkEngineRequestService, engine: NetworkEngine, role: NetworkTelemetryRole, datacenterId: Int, telemetry: NetworkTelemetry) {
         self.service = service
         self.fixedKind = engine.kind
-        self.switchingEngine = engine as? SwitchingNetworkEngine
         self.role = role
         self.datacenterId = datacenterId
         self.telemetry = telemetry
@@ -160,7 +157,7 @@ private final class RecordingRequestService: NetworkEngineRequestService {
         if request.telemetry != nil {
             return self.service.add(request)
         }
-        self.telemetry.begin(request: request, engine: self.switchingEngine?.kind ?? self.fixedKind, role: self.role, datacenterId: self.datacenterId)
+        self.telemetry.begin(request: request, engine: self.fixedKind, role: self.role, datacenterId: self.datacenterId)
         let disposable = self.service.add(request)
         if (disposable as AnyObject) === (EmptyDisposable as AnyObject), let info = request.telemetryInfo {
             self.telemetry.dropped(request: request, info: info)
