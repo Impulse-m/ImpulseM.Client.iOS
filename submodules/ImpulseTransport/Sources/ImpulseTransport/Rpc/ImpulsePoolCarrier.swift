@@ -317,26 +317,15 @@ public final class ImpulsePoolCarrier {
     /// SDK error carries the reply code, or 0 when the failure is not a server reply.
     internal static func failure(from error: Error) -> ImpulsePoolFailure {
         guard let sdkError: CentrifugeError = error as? CentrifugeError else {
-            return .carrier(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:]))
+            return .carrier(ImpulseSdkFailure.carrierFailure(from: error))
         }
         switch sdkError {
         case .clientDisconnected:
             return .mainDisconnected
         case .unauthorized:
             return .sessionEnded
-        case .replyErrorDetails(let details):
-            return .carrier(ImpulseCarrierFailure(
-                sdkCode: Int(details.code),
-                appCode: Int(details.appCode),
-                appType: details.appType,
-                metadata: details.metadata
-            ))
-        case .replyError(let code, _, _):
-            return .carrier(ImpulseCarrierFailure(sdkCode: Int(code), appCode: 0, appType: "", metadata: [:]))
-        case .clientRejected(let code, _):
-            return .carrier(ImpulseCarrierFailure(sdkCode: Int(code), appCode: 0, appType: "", metadata: [:]))
         default:
-            return .carrier(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:]))
+            return .carrier(ImpulseSdkFailure.carrierFailure(from: error))
         }
     }
 
