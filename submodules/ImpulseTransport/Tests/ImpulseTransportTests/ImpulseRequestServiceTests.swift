@@ -138,12 +138,48 @@ private final class RequestServiceFlakySession: ImpulseRequestSession, @unchecke
 }
 
 
+/// A clock that moves only when the service waits, so no retry or deadline waits in real time.
+private final class RequestServiceClock: ImpulseRequestClock, @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private var now: TimeInterval = 0
+    private var waits: [TimeInterval] = []
+
+
+    func nowSeconds() -> TimeInterval {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.now
+    }
+
+
+    func sleep(seconds: TimeInterval) async throws {
+        self.lock.lock()
+        self.now += seconds
+        self.waits.append(seconds)
+        self.lock.unlock()
+        try Task.checkCancellation()
+    }
+
+
+    func waitedSeconds() -> [TimeInterval] {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.waits
+    }
+}
+
+
 private final class RequestServiceCarrier: ImpulseRequestCarrier, @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private var replies: [Result<[UInt8], ImpulseCarrierFailure>]
     private let delays: [String: TimeInterval]
     private var started: [String] = []
     private var completed: [String] = []
+    private var timeouts: [TimeInterval] = []
 
 
     init(
@@ -160,6 +196,7 @@ private final class RequestServiceCarrier: ImpulseRequestCarrier, @unchecked Sen
         data: [UInt8],
         timeoutSeconds: TimeInterval
     ) async -> Result<[UInt8], ImpulseCarrierFailure> {
+        self.recordTimeout(timeoutSeconds)
         let reply: Result<[UInt8], ImpulseCarrierFailure> = self.startCall(method: method)
         let delay: TimeInterval = self.delays[method] ?? 0
         if delay > 0 {
@@ -176,6 +213,22 @@ private final class RequestServiceCarrier: ImpulseRequestCarrier, @unchecked Sen
             self.lock.unlock()
         }
         return self.started
+    }
+
+
+    func sentTimeouts() -> [TimeInterval] {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.timeouts
+    }
+
+
+    private func recordTimeout(_ timeoutSeconds: TimeInterval) {
+        self.lock.lock()
+        self.timeouts.append(timeoutSeconds)
+        self.lock.unlock()
     }
 
 
@@ -287,7 +340,8 @@ private func makeService(
     update: RequestServiceCarrier,
     gate: RequestServiceGate?,
     signedIn: Bool,
-    counter: RequestServiceCounter
+    counter: RequestServiceCounter,
+    clock: RequestServiceClock = RequestServiceClock()
 ) -> ImpulseRequestService {
     let unused: RequestServiceCarrier = RequestServiceCarrier(replies: [], delays: [:])
     return ImpulseRequestService(
@@ -299,7 +353,8 @@ private func makeService(
         signedIn: signedIn,
         onAuthorizationRequired: {
             counter.increment()
-        }
+        },
+        clock: clock
     )
 }
 
@@ -311,6 +366,12 @@ final class ImpulseRequestServiceTests: XCTestCase {
         XCTAssertEqual(ImpulseRequestTimeouts.callSeconds(route: .media), 10)
         XCTAssertEqual(ImpulseRequestTimeouts.declarationWaitSeconds, 10)
         XCTAssertEqual(ImpulseRequestTimeouts.blockingWaitSeconds(callSeconds: 30), 35)
+    }
+
+
+    func testRequestsHaveNoTotalDeadlineByDefault() {
+        XCTAssertNil(ImpulseRequestOptions().totalDeadlineSeconds)
+        XCTAssertEqual(ImpulseRequestOptions(totalDeadlineSeconds: 10).totalDeadlineSeconds, 10)
     }
 
 
@@ -717,12 +778,14 @@ final class ImpulseRequestServiceTests: XCTestCase {
             delays: [:]
         )
         let counter: RequestServiceCounter = RequestServiceCounter()
+        let clock: RequestServiceClock = RequestServiceClock()
         let service: ImpulseRequestService = makeService(
             session: session,
             update: carrier,
             gate: nil,
             signedIn: true,
-            counter: counter
+            counter: counter,
+            clock: clock
         )
 
         let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
@@ -732,7 +795,150 @@ final class ImpulseRequestServiceTests: XCTestCase {
 
         XCTAssertEqual(result.successValue, [6])
         XCTAssertEqual(carrier.sentMethods().count, 2)
+        XCTAssertEqual(clock.waitedSeconds(), [1])
         XCTAssertEqual(counter.value(), 0)
+    }
+
+
+    /// Without a total deadline a network failure keeps being retried, waiting one second longer each time, until a
+    /// reply arrives. The carrier script ends in a reply, so the call ends.
+    func testNetworkFailureWithoutDeadlineKeepsRetrying() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: [networkFailure(), networkFailure(), networkFailure(), .success([6])],
+            delays: [:]
+        )
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.successValue, [6])
+        XCTAssertEqual(carrier.sentMethods().count, 4)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2, 3])
+    }
+
+
+    /// With a total deadline the call ends with the network failure once the deadline passes. The waits 1, 2, 3 and 4
+    /// end at the 10-second deadline, so the fifth reply is never requested.
+    func testNetworkFailureEndsWithNetworkFailureAtDeadline() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: [networkFailure(), networkFailure(), networkFailure(), networkFailure(), .success([6])],
+            delays: [:]
+        )
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions(totalDeadlineSeconds: 10)
+        )
+
+        XCTAssertEqual(result.failureValue, .network(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])))
+        XCTAssertEqual(carrier.sentMethods().count, 4)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2, 3, 4])
+        XCTAssertEqual(clock.nowSeconds(), 10)
+    }
+
+
+    /// Each send is cut to the time left before the total deadline, and each wait is cut at the deadline too. The
+    /// sends time out at 5, 4 and 2 seconds, and the waits are 1, 2 and 2 seconds.
+    func testSendsAndWaitsAreCutToTheDeadline() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: [networkFailure(), networkFailure(), networkFailure(), .success([6])],
+            delays: [:]
+        )
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions(totalDeadlineSeconds: 5)
+        )
+
+        XCTAssertEqual(result.failureValue, .network(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])))
+        XCTAssertEqual(carrier.sentTimeouts(), [5, 4, 2])
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2, 2])
+    }
+
+
+    /// A deadline that has already passed sends nothing and ends with the network failure.
+    func testPassedDeadlineSendsNothing() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: [.success([6])], delays: [:])
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter()
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions(totalDeadlineSeconds: 0)
+        )
+
+        XCTAssertEqual(result.failureValue, .network(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])))
+        XCTAssertTrue(carrier.sentMethods().isEmpty)
+    }
+
+
+    /// A flood wait is cut at the deadline as well, and the call then ends with the RPC error it was waiting out.
+    func testFloodWaitIsCutAtTheDeadlineAndEndsWithItsError() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: [apiFailure(code: 420, text: "FLOOD_WAIT_20"), .success([6])],
+            delays: [:]
+        )
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions(totalDeadlineSeconds: 5)
+        )
+
+        guard case .some(.rpc(let error)) = result.failureValue else {
+            XCTFail("a flood wait cut at the deadline must end with its RPC error")
+            return
+        }
+        XCTAssertEqual(error.text, "FLOOD_WAIT_20")
+        XCTAssertEqual(carrier.sentMethods().count, 1)
+        XCTAssertEqual(clock.waitedSeconds(), [5])
     }
 
 
@@ -749,7 +955,8 @@ final class ImpulseRequestServiceTests: XCTestCase {
             signedIn: true,
             onAuthorizationRequired: {
                 counter.increment()
-            }
+            },
+            clock: RequestServiceClock()
         )
 
         let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
@@ -779,7 +986,8 @@ final class ImpulseRequestServiceTests: XCTestCase {
             signedIn: true,
             onAuthorizationRequired: {
                 counter.increment()
-            }
+            },
+            clock: RequestServiceClock()
         )
 
         let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(

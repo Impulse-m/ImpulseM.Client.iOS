@@ -108,7 +108,8 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
         poolCarrier: any ImpulseRequestCarrier,
         declarations: (any ImpulseDeclarationGate)?,
         signedIn: Bool,
-        delegate: (any ImpulseNetworkSessionDelegate)?
+        delegate: (any ImpulseNetworkSessionDelegate)?,
+        clock: any ImpulseRequestClock = ImpulseSystemRequestClock()
     ) {
         self.datacenterId = datacenterId
         self.role = role
@@ -130,7 +131,8 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
             poolCarrier: ImpulseSendReportingCarrier(inner: poolCarrier),
             declarations: declarations,
             signedIn: signedIn,
-            onAuthorizationRequired: authorizationRequired
+            onAuthorizationRequired: authorizationRequired,
+            clock: clock
         )
     }
 

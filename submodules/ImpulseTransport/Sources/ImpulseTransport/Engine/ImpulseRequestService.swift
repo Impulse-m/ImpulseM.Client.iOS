@@ -46,18 +46,24 @@ public struct ImpulseRequestOptions: Equatable, Sendable {
     public let failOnServerErrorsExceptFloodWait: Bool
     /// Flood waits are delivered at once instead of waited out.
     public let doNotWaitFloodWait: Bool
+    /// The longest time the call may take, in seconds, counted from when the call is ready to be sent, after any wait
+    /// for a login. Nil means no total deadline: the call retries until it gets a reply, the same as the Android client.
+    /// Once the deadline passes, no further send or wait starts, and a send in flight is cut to the time left.
+    public let totalDeadlineSeconds: TimeInterval?
 
 
     public init(
         withoutLogin: Bool = false,
         failOnServerErrors: Bool = false,
         failOnServerErrorsExceptFloodWait: Bool = false,
-        doNotWaitFloodWait: Bool = false
+        doNotWaitFloodWait: Bool = false,
+        totalDeadlineSeconds: TimeInterval? = nil
     ) {
         self.withoutLogin = withoutLogin
         self.failOnServerErrors = failOnServerErrors
         self.failOnServerErrorsExceptFloodWait = failOnServerErrorsExceptFloodWait
         self.doNotWaitFloodWait = doNotWaitFloodWait
+        self.totalDeadlineSeconds = totalDeadlineSeconds
     }
 }
 
@@ -172,6 +178,34 @@ public enum ImpulseRequestPolicy {
     /// so the wait grows by one second per failure up to the largest server backoff.
     public static func networkFailureSeconds(attempt: Int) -> TimeInterval {
         return min(TimeInterval(max(attempt, 1)), ImpulseRequestPolicy.maxServerBackoffSeconds)
+    }
+}
+
+
+/// The time and the waits of the request service. The app uses `ImpulseSystemRequestClock`; tests inject a fake clock
+/// so that no retry or deadline waits in real time.
+public protocol ImpulseRequestClock: Sendable {
+    /// The current time in seconds. Only the difference between two readings is meaningful.
+    func nowSeconds() -> TimeInterval
+
+    /// Waits for `seconds`. Throws when the waiting task is cancelled.
+    func sleep(seconds: TimeInterval) async throws
+}
+
+
+/// The monotonic system time and a real sleep.
+public struct ImpulseSystemRequestClock: ImpulseRequestClock {
+    public init() {
+    }
+
+
+    public func nowSeconds() -> TimeInterval {
+        return ProcessInfo.processInfo.systemUptime
+    }
+
+
+    public func sleep(seconds: TimeInterval) async throws {
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 }
 
@@ -297,7 +331,16 @@ public final class ImpulseRequestService: Sendable {
     private let declarations: (any ImpulseDeclarationGate)?
     private let loginGate: ImpulseLoginGate
     private let onAuthorizationRequired: @Sendable () -> Void
+    private let clock: any ImpulseRequestClock
     private static let notInitializedText: String = "CONNECTION_NOT_INITED"
+    /// The failure a call ends with when its deadline passes before any carrier failure. It has no server answer, so
+    /// it is a timeout, the same as a carrier failure without a code.
+    private static let deadlineFailure: ImpulseCarrierFailure = ImpulseCarrierFailure(
+        sdkCode: 0,
+        appCode: 0,
+        appType: "",
+        metadata: [:]
+    )
 
 
     /// What a token refresh ended with: a fresh session, a refresh that did not renew the session, or a refresh that
@@ -310,7 +353,8 @@ public final class ImpulseRequestService: Sendable {
 
 
     /// Creates the service. `signedIn` is the login state at creation; `onAuthorizationRequired` runs when a request
-    /// of a signed-in connection ends with a 401 other than `SESSION_PASSWORD_NEEDED`.
+    /// of a signed-in connection ends with a 401 other than `SESSION_PASSWORD_NEEDED`. `clock` times the waits and the
+    /// total deadlines of the calls.
     public init(
         session: any ImpulseRequestSession,
         updateCarrier: any ImpulseRequestCarrier,
@@ -318,7 +362,8 @@ public final class ImpulseRequestService: Sendable {
         poolCarrier: any ImpulseRequestCarrier,
         declarations: (any ImpulseDeclarationGate)?,
         signedIn: Bool,
-        onAuthorizationRequired: @escaping @Sendable () -> Void
+        onAuthorizationRequired: @escaping @Sendable () -> Void,
+        clock: any ImpulseRequestClock = ImpulseSystemRequestClock()
     ) {
         self.session = session
         self.updateCarrier = updateCarrier
@@ -327,6 +372,7 @@ public final class ImpulseRequestService: Sendable {
         self.declarations = declarations
         self.loginGate = ImpulseLoginGate(isOpen: signedIn)
         self.onAuthorizationRequired = onAuthorizationRequired
+        self.clock = clock
     }
 
 
@@ -374,12 +420,16 @@ public final class ImpulseRequestService: Sendable {
             return .failure(.canceled)
         }
 
+        let deadline: TimeInterval? = options.totalDeadlineSeconds.map { (seconds: TimeInterval) -> TimeInterval in
+            return self.clock.nowSeconds() + seconds
+        }
         var refreshDue: Bool = true
         var declarationAwaited: Bool = false
         var refreshAttempted: Bool = false
         var redeclared: Bool = false
         var failureCount: Int = 0
         var networkAttempt: Int = 1
+        var lastFailure: ImpulseCarrierFailure = ImpulseRequestService.deadlineFailure
         while true {
             if Task.isCancelled {
                 return .failure(.canceled)
@@ -399,13 +449,14 @@ public final class ImpulseRequestService: Sendable {
                             return .failure(.rpc(ImpulseRpcError(code: 401, text: "SESSION_EXPIRED", temporary: false)))
 
                         case .faulted:
-                            let resumed: Bool = await self.pause(
-                                seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt)
-                            )
-                            networkAttempt += 1
-                            if !resumed {
-                                return .failure(.canceled)
+                            if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
+                                seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt),
+                                deadline: deadline,
+                                endingWith: .network(lastFailure)
+                            ) {
+                                return .failure(ended)
                             }
+                            networkAttempt += 1
                             refreshDue = true
                             continue
                         }
@@ -420,9 +471,15 @@ public final class ImpulseRequestService: Sendable {
                 }
             }
 
+            let timeoutSeconds: TimeInterval = self.sendTimeout(route: route, deadline: deadline)
+            if timeoutSeconds <= 0 {
+                return .failure(.network(lastFailure))
+            }
+
             let settled: Result<[UInt8], ImpulseCarrierFailure> = await self.sendOnce(
                 request: request,
-                route: route
+                route: route,
+                timeoutSeconds: timeoutSeconds
             )
             switch settled {
             case .success(let reply):
@@ -433,13 +490,15 @@ public final class ImpulseRequestService: Sendable {
                     return .failure(.canceled)
                 }
                 guard let error: ImpulseRpcError = ImpulseCarrier.rpcError(from: failure, route: route) else {
-                    let resumed: Bool = await self.pause(
-                        seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt)
-                    )
-                    networkAttempt += 1
-                    if !resumed {
-                        return .failure(.canceled)
+                    lastFailure = failure
+                    if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
+                        seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt),
+                        deadline: deadline,
+                        endingWith: .network(failure)
+                    ) {
+                        return .failure(ended)
                     }
+                    networkAttempt += 1
                     refreshDue = true
                     continue
                 }
@@ -464,13 +523,14 @@ public final class ImpulseRequestService: Sendable {
                         refreshAttempted = true
 
                     case .faulted:
-                        let resumed: Bool = await self.pause(
-                            seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt)
-                        )
-                        networkAttempt += 1
-                        if !resumed {
-                            return .failure(.canceled)
+                        if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
+                            seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt),
+                            deadline: deadline,
+                            endingWith: .network(lastFailure)
+                        ) {
+                            return .failure(ended)
                         }
+                        networkAttempt += 1
                         refreshDue = true
                         continue
                     }
@@ -493,9 +553,12 @@ public final class ImpulseRequestService: Sendable {
 
                 case .retryAfter(let seconds):
                     failureCount += 1
-                    let resumed: Bool = await self.pause(seconds: seconds)
-                    if !resumed {
-                        return .failure(.canceled)
+                    if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
+                        seconds: seconds,
+                        deadline: deadline,
+                        endingWith: .rpc(error)
+                    ) {
+                        return .failure(ended)
                     }
                 }
             }
@@ -503,9 +566,24 @@ public final class ImpulseRequestService: Sendable {
     }
 
 
+    /// The time a send may take: the call deadline, or the time left before the total deadline when that is shorter.
+    /// Zero or less means the deadline has passed.
+    private func sendTimeout(
+        route: ImpulseCarrierRoute,
+        deadline: TimeInterval?
+    ) -> TimeInterval {
+        let callSeconds: TimeInterval = ImpulseRequestTimeouts.callSeconds(route: route)
+        guard let end: TimeInterval = deadline else {
+            return callSeconds
+        }
+        return min(callSeconds, end - self.clock.nowSeconds())
+    }
+
+
     private func sendOnce(
         request: ImpulseEncodedRequest,
-        route: ImpulseCarrierRoute
+        route: ImpulseCarrierRoute,
+        timeoutSeconds: TimeInterval
     ) async -> Result<[UInt8], ImpulseCarrierFailure> {
         let carrier: any ImpulseRequestCarrier
         switch route {
@@ -525,7 +603,7 @@ public final class ImpulseRequestService: Sendable {
         return await carrier.send(
             method: request.method,
             data: request.proto,
-            timeoutSeconds: ImpulseRequestTimeouts.callSeconds(route: route)
+            timeoutSeconds: timeoutSeconds
         )
     }
 
@@ -545,16 +623,32 @@ public final class ImpulseRequestService: Sendable {
     }
 
 
-    /// Waits for `seconds`. False when the task was cancelled during the wait.
-    private func pause(seconds: TimeInterval) async -> Bool {
-        if seconds > 0 {
+    /// Waits before the next attempt. Nil when the call goes on. Otherwise it is the failure that ends the call: `canceled`
+    /// when the task was cancelled during the wait, or `endingWith` when the deadline passed during it. The wait is cut
+    /// at the deadline, so no wait runs past it.
+    private func waitBeforeAttempt(
+        seconds: TimeInterval,
+        deadline: TimeInterval?,
+        endingWith: ImpulseRequestFailure
+    ) async -> ImpulseRequestFailure? {
+        var wait: TimeInterval = seconds
+        if let end: TimeInterval = deadline {
+            wait = min(seconds, end - self.clock.nowSeconds())
+        }
+        if wait > 0 {
             do {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                try await self.clock.sleep(seconds: wait)
             } catch {
-                return false
+                return .canceled
             }
         }
 
-        return !Task.isCancelled
+        if Task.isCancelled {
+            return .canceled
+        }
+        if let end: TimeInterval = deadline, self.clock.nowSeconds() >= end {
+            return endingWith
+        }
+        return nil
     }
 }

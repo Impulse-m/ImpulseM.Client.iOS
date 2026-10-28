@@ -20,14 +20,20 @@ private struct NetworkSessionTokens: ImpulseRequestSession {
 }
 
 
+/// The SDK code of a cancelled carrier call.
+private let networkSessionCancelledCode: Int = 17
+
+
+/// Answers the sends with the queued replies in order. Once the queue is empty every send is answered as cancelled, so
+/// a call that keeps retrying still ends.
 private final class NetworkSessionCarrier: ImpulseRequestCarrier, @unchecked Sendable {
     private let lock: NSLock = NSLock()
-    private let reply: Result<[UInt8], ImpulseCarrierFailure>
+    private let replies: [Result<[UInt8], ImpulseCarrierFailure>]
     private var sends: Int = 0
 
 
-    init(reply: Result<[UInt8], ImpulseCarrierFailure>) {
-        self.reply = reply
+    init(replies: [Result<[UInt8], ImpulseCarrierFailure>]) {
+        self.replies = replies
     }
 
 
@@ -37,9 +43,15 @@ private final class NetworkSessionCarrier: ImpulseRequestCarrier, @unchecked Sen
         timeoutSeconds: TimeInterval
     ) async -> Result<[UInt8], ImpulseCarrierFailure> {
         self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        let index: Int = self.sends
         self.sends += 1
-        self.lock.unlock()
-        return self.reply
+        if index < self.replies.count {
+            return self.replies[index]
+        }
+        return .failure(ImpulseCarrierFailure(sdkCode: networkSessionCancelledCode, appCode: 0, appType: "", metadata: [:]))
     }
 
 
@@ -49,6 +61,41 @@ private final class NetworkSessionCarrier: ImpulseRequestCarrier, @unchecked Sen
             self.lock.unlock()
         }
         return self.sends
+    }
+}
+
+
+/// A clock that moves only when the session waits, so no retry waits in real time.
+private final class NetworkSessionClock: ImpulseRequestClock, @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private var now: TimeInterval = 0
+    private var waits: [TimeInterval] = []
+
+
+    func nowSeconds() -> TimeInterval {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.now
+    }
+
+
+    func sleep(seconds: TimeInterval) async throws {
+        self.lock.lock()
+        self.now += seconds
+        self.waits.append(seconds)
+        self.lock.unlock()
+        try Task.checkCancellation()
+    }
+
+
+    func waitedSeconds() -> [TimeInterval] {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.waits
     }
 }
 
@@ -97,9 +144,26 @@ final class ImpulseNetworkSessionTests: XCTestCase {
         reply: Result<[UInt8], ImpulseCarrierFailure>,
         delegate: (any ImpulseNetworkSessionDelegate)?
     ) throws -> ImpulseNetworkSession {
+        return try makeSession(
+            datacenterId: datacenterId,
+            role: role,
+            replies: [reply],
+            delegate: delegate,
+            clock: NetworkSessionClock()
+        )
+    }
+
+
+    private func makeSession(
+        datacenterId: Int,
+        role: ImpulseSessionRole,
+        replies: [Result<[UInt8], ImpulseCarrierFailure>],
+        delegate: (any ImpulseNetworkSessionDelegate)?,
+        clock: NetworkSessionClock
+    ) throws -> ImpulseNetworkSession {
         let mapping: ImpulseMapping = try ImpulseMapping.loadBundled()
         let transcoder: ImpulseTranscoder = ImpulseTranscoder(mapping: mapping)
-        let carrier: NetworkSessionCarrier = NetworkSessionCarrier(reply: reply)
+        let carrier: NetworkSessionCarrier = NetworkSessionCarrier(replies: replies)
         return ImpulseNetworkSession(
             datacenterId: datacenterId,
             role: role,
@@ -110,7 +174,8 @@ final class ImpulseNetworkSessionTests: XCTestCase {
             poolCarrier: carrier,
             declarations: nil,
             signedIn: true,
-            delegate: delegate
+            delegate: delegate,
+            clock: clock
         )
     }
 
@@ -129,12 +194,14 @@ final class ImpulseNetworkSessionTests: XCTestCase {
     private func perform(
         session: ImpulseNetworkSession,
         tl: [UInt8],
+        options: ImpulseRequestOptions = ImpulseRequestOptions(),
         parse: @escaping ([UInt8]) -> Any?,
         acknowledged: (() -> Void)?
     ) async -> Result<ImpulseNetworkResponse, ImpulseRequestFailure> {
         return await withCheckedContinuation { (continuation: CheckedContinuation<Result<ImpulseNetworkResponse, ImpulseRequestFailure>, Never>) -> Void in
             let request: ImpulseNetworkRequest = ImpulseNetworkRequest(
                 tl: tl,
+                options: options,
                 acknowledged: acknowledged,
                 parse: parse,
                 completed: { (result: Result<ImpulseNetworkResponse, ImpulseRequestFailure>) -> Void in
@@ -278,13 +345,23 @@ final class ImpulseNetworkSessionTests: XCTestCase {
     }
 
 
-    func testNetworkFailureIsDeliveredAsNetworkNotRpc() async throws {
+    /// Without a total deadline a network failure is retried, as on Android. The carrier answers the third send as
+    /// cancelled, which ends the call, so the test is bounded by its script.
+    func testNetworkFailureIsRetriedWithoutDeadline() async throws {
         let carrierFailure: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
+        let cancelledFailure: ImpulseCarrierFailure = ImpulseCarrierFailure(
+            sdkCode: networkSessionCancelledCode,
+            appCode: 0,
+            appType: "",
+            metadata: [:]
+        )
+        let clock: NetworkSessionClock = NetworkSessionClock()
         let session: ImpulseNetworkSession = try makeSession(
             datacenterId: 4,
             role: .main,
-            reply: .failure(carrierFailure),
-            delegate: nil
+            replies: [.failure(carrierFailure), .failure(carrierFailure), .failure(cancelledFailure)],
+            delegate: nil,
+            clock: clock
         )
 
         let outcome: Result<ImpulseNetworkResponse, ImpulseRequestFailure> = await self.perform(
@@ -296,11 +373,41 @@ final class ImpulseNetworkSessionTests: XCTestCase {
             acknowledged: nil
         )
 
+        XCTAssertEqual(self.failureValue(outcome), .canceled)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2])
+    }
+
+
+    /// With a total deadline a network failure is delivered as a network failure once the deadline passes, never as an
+    /// RPC error. The waits of 1 and 2 seconds end exactly at the 3-second deadline, so no third send starts.
+    func testNetworkFailureIsDeliveredAsNetworkNotRpc() async throws {
+        let carrierFailure: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
+        let clock: NetworkSessionClock = NetworkSessionClock()
+        let session: ImpulseNetworkSession = try makeSession(
+            datacenterId: 4,
+            role: .main,
+            replies: [.failure(carrierFailure), .failure(carrierFailure), .failure(carrierFailure)],
+            delegate: nil,
+            clock: clock
+        )
+
+        let outcome: Result<ImpulseNetworkResponse, ImpulseRequestFailure> = await self.perform(
+            session: session,
+            tl: try resetAuthorizationsTl(),
+            options: ImpulseRequestOptions(totalDeadlineSeconds: 3),
+            parse: { (_: [UInt8]) -> Any? in
+                return "parsed"
+            },
+            acknowledged: nil
+        )
+
         guard case .some(.network(let failure)) = self.failureValue(outcome) else {
-            XCTFail("a carrier failure without a server answer must be a network failure")
+            XCTFail("a carrier failure without a server answer must be a network failure at the deadline")
             return
         }
         XCTAssertEqual(failure, carrierFailure)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2])
+        XCTAssertEqual(clock.nowSeconds(), 3)
     }
 
 

@@ -69,6 +69,88 @@ private final class AuthFlowStorage: ImpulseSessionStorage, @unchecked Sendable 
 }
 
 
+/// A request clock that moves only when the service waits, so the logOut deadline is measured without real time.
+private final class AuthFlowRequestClock: ImpulseRequestClock, @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private var now: TimeInterval = 0
+
+
+    func nowSeconds() -> TimeInterval {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.now
+    }
+
+
+    func sleep(seconds: TimeInterval) async throws {
+        self.lock.lock()
+        self.now += seconds
+        self.lock.unlock()
+        try Task.checkCancellation()
+    }
+}
+
+
+/// Fails every send without a server answer. It answers as cancelled after `maxSends` sends, so a call that ignored its
+/// deadline still ends.
+private final class AuthFlowFailingCarrier: ImpulseRequestCarrier, @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private let maxSends: Int = 50
+    private var sends: Int = 0
+
+
+    func send(
+        method: String,
+        data: [UInt8],
+        timeoutSeconds: TimeInterval
+    ) async -> Result<[UInt8], ImpulseCarrierFailure> {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        self.sends += 1
+        if self.sends > self.maxSends {
+            return .failure(ImpulseCarrierFailure(sdkCode: 17, appCode: 0, appType: "", metadata: [:]))
+        }
+        return .failure(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:]))
+    }
+
+
+    func sendCount() -> Int {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.sends
+    }
+}
+
+
+/// Reports its first send to the test, then holds the send until the task is cancelled. The hold is bounded at five
+/// seconds, so the test cannot hang when the cancellation does not come.
+private final class AuthFlowHangingCarrier: ImpulseRequestCarrier, @unchecked Sendable {
+    private let started: XCTestExpectation
+
+
+    init(started: XCTestExpectation) {
+        self.started = started
+    }
+
+
+    func send(
+        method: String,
+        data: [UInt8],
+        timeoutSeconds: TimeInterval
+    ) async -> Result<[UInt8], ImpulseCarrierFailure> {
+        self.started.fulfill()
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        return .failure(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:]))
+    }
+}
+
+
 private struct AuthFlowClock: ImpulseIdentityClock {
     func nowUnixSeconds() -> Double {
         return 1_000_000
@@ -206,6 +288,7 @@ final class ImpulseAuthFlowTests: XCTestCase {
         let identityStore: AuthFlowIdentityStore
         let identity: ImpulseIdentityManager
         let storage: AuthFlowStorage
+        let tokens: ImpulseTokens
         let socket: AuthFlowSocket
         let differences: AuthFlowDifferences
         let realtime: ImpulseRealtime
@@ -261,11 +344,42 @@ final class ImpulseAuthFlowTests: XCTestCase {
             identityStore: identityStore,
             identity: identity,
             storage: storage,
+            tokens: tokens,
             socket: socket,
             differences: differences,
             realtime: realtime,
             requester: requester,
             flow: flow
+        )
+    }
+
+
+    /// Builds a flow over the fixture's stores whose requester is a real request service on `carrier`, so the logOut
+    /// call runs the retry and deadline rules of the service.
+    private func makeServiceFlow(
+        fixture: Fixture,
+        carrier: any ImpulseRequestCarrier,
+        clock: any ImpulseRequestClock
+    ) -> ImpulseAuthFlow {
+        let service: ImpulseRequestService = ImpulseRequestService(
+            session: fixture.tokens,
+            updateCarrier: carrier,
+            mediaCarrier: carrier,
+            poolCarrier: carrier,
+            declarations: nil,
+            signedIn: true,
+            onAuthorizationRequired: {
+            },
+            clock: clock
+        )
+        return ImpulseAuthFlow(
+            identity: fixture.identity,
+            tokens: fixture.tokens,
+            storage: fixture.storage,
+            realtime: fixture.realtime,
+            requester: service,
+            transcoder: ImpulseTranscoder(mapping: fixture.mapping),
+            mapping: fixture.mapping
         )
     }
 
@@ -491,7 +605,7 @@ final class ImpulseAuthFlowTests: XCTestCase {
 
         XCTAssertEqual(fixture.requester.sentMethods, ["auth.signIn", "auth.logOut"])
         XCTAssertTrue(sessionAtLogOut)
-        XCTAssertEqual(fixture.requester.lastOptions, ImpulseRequestOptions())
+        XCTAssertEqual(fixture.requester.lastOptions, ImpulseRequestOptions(totalDeadlineSeconds: 10))
         XCTAssertNil(fixture.storage.stored)
         XCTAssertEqual(fixture.pool.mintCount, 2)
         XCTAssertEqual(fixture.identityStore.values[ImpulseIdentityRules.storageKey], fixture.pool.issued[1])
@@ -532,5 +646,58 @@ final class ImpulseAuthFlowTests: XCTestCase {
         XCTAssertTrue(fixture.requester.sentMethods.isEmpty)
         XCTAssertNil(fixture.storage.stored)
         XCTAssertEqual(fixture.requester.gateStates, [false])
+    }
+
+
+    /// A carrier that fails every send without a server answer does not stop the sign-out: the logOut call makes four
+    /// sends, waiting 1, 2, 3 and 4 seconds on the fake clock, and ends at the 10-second deadline. The session is then
+    /// cleared and the socket rekeyed to a fresh identity.
+    func testSignOutWithFailingCarrierClearsSessionWithinDeadline() async throws {
+        let fixture: Fixture = try makeFixture()
+        try await signIn(fixture)
+        fixture.socket.calls.removeAll()
+        let carrier: AuthFlowFailingCarrier = AuthFlowFailingCarrier()
+        let clock: AuthFlowRequestClock = AuthFlowRequestClock()
+        let flow: ImpulseAuthFlow = makeServiceFlow(fixture: fixture, carrier: carrier, clock: clock)
+
+        try await flow.signOut()
+
+        XCTAssertEqual(carrier.sendCount(), 4)
+        XCTAssertEqual(clock.nowSeconds(), 10)
+        XCTAssertNil(fixture.storage.stored)
+        XCTAssertFalse(fixture.tokens.hasSession())
+        XCTAssertEqual(fixture.pool.mintCount, 2)
+        XCTAssertEqual(fixture.identityStore.values[ImpulseIdentityRules.storageKey], fixture.pool.issued[1])
+        XCTAssertEqual(
+            fixture.socket.calls,
+            ["unsubscribe user:3", "disconnect", "token " + fixture.pool.issued[1], "connect"]
+        )
+    }
+
+
+    /// A sign-out cancelled while the logOut call is in flight still clears the session and rekeys the socket.
+    func testSignOutCancelledMidCallStillClearsSession() async throws {
+        let fixture: Fixture = try makeFixture()
+        try await signIn(fixture)
+        fixture.socket.calls.removeAll()
+        let started: XCTestExpectation = expectation(description: "the logOut call is in flight")
+        let carrier: AuthFlowHangingCarrier = AuthFlowHangingCarrier(started: started)
+        let flow: ImpulseAuthFlow = makeServiceFlow(fixture: fixture, carrier: carrier, clock: AuthFlowRequestClock())
+        let signOut: Task<Void, Error> = Task {
+            try await flow.signOut()
+        }
+
+        await fulfillment(of: [started], timeout: 5)
+        signOut.cancel()
+        _ = try? await signOut.value
+
+        XCTAssertNil(fixture.storage.stored)
+        XCTAssertFalse(fixture.tokens.hasSession())
+        XCTAssertEqual(fixture.pool.mintCount, 2)
+        XCTAssertEqual(fixture.identityStore.values[ImpulseIdentityRules.storageKey], fixture.pool.issued[1])
+        XCTAssertEqual(
+            fixture.socket.calls,
+            ["unsubscribe user:3", "disconnect", "token " + fixture.pool.issued[1], "connect"]
+        )
     }
 }

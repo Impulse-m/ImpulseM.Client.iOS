@@ -60,6 +60,8 @@ public actor ImpulseAuthFlow {
     private static let reloginDaysBit: Int32 = 1 << 1
     private static let tmpSessionsBit: Int32 = 1 << 0
     private static let futureAuthTokenBit: Int32 = 1 << 2
+    /// The total deadline of the `auth.logOut` call of a sign-out, in seconds. The local sign-out never waits past it.
+    private static let logOutDeadlineSeconds: TimeInterval = 10
 
     private let identity: ImpulseIdentityManager
     private let tokens: ImpulseTokens
@@ -230,8 +232,9 @@ public actor ImpulseAuthFlow {
     }
 
 
-    /// Sends `auth.logOut` while the session is still signed in. The reply is ignored, success or failure alike, so a
-    /// failed call never blocks the local sign-out.
+    /// Sends `auth.logOut` while the session is still signed in, with a total deadline of `logOutDeadlineSeconds`. The
+    /// reply is ignored, success, RPC error, network failure, deadline or cancellation alike, and the call never throws,
+    /// so the local sign-out that follows always runs.
     private func endServerSession() async {
         guard let method: ImpulseMappingMethod = mapping.method(name: ImpulseAuthFlow.logOutMethod) else {
             return
@@ -241,7 +244,10 @@ public actor ImpulseAuthFlow {
         guard let request: ImpulseEncodedRequest = try? transcoder.encodeRequest(tl: writer.toByteArray()) else {
             return
         }
-        _ = await requester.execute(request: request, options: ImpulseRequestOptions())
+        let options: ImpulseRequestOptions = ImpulseRequestOptions(
+            totalDeadlineSeconds: ImpulseAuthFlow.logOutDeadlineSeconds
+        )
+        _ = await requester.execute(request: request, options: options)
     }
 
 
