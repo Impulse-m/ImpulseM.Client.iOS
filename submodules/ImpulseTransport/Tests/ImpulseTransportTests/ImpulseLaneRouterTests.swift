@@ -314,12 +314,12 @@ final class ImpulseLaneRouterTests: XCTestCase {
     }
 
 
-    func testFailedSessionRecoveryRequestsNoDifference() throws {
+    func testFailedSessionRecoveryRequestsAccountDifference() throws {
         let fixture: Fixture = try makeFixture()
 
         fixture.realtime.handleSubscribed(channel: "session:5:77", recovered: false, wasRecovering: true)
 
-        XCTAssertEqual(fixture.recorder.differences, [])
+        XCTAssertEqual(fixture.recorder.differences, [.account(.subscribeNotRecovered)])
     }
 
 
