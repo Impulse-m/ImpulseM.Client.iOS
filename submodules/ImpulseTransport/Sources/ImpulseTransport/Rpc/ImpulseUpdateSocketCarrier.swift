@@ -53,6 +53,30 @@ public final class ImpulseUpdateSocketCarrier: ImpulseRequestCarrier, @unchecked
     private let transport: any ImpulseUpdateTransport
 
 
+    /// The configuration of an update socket client when none is given: the reconnect backoff, the ping watchdog and the
+    /// native WebSocket transport of `ImpulseSocketPolicy`, with the timeout of the update calls. The token is left empty.
+    public static func defaultClientConfig() -> CentrifugeClientConfig {
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+        config.timeout = ImpulseRequestTimeouts.updateCallSeconds
+        return config
+    }
+
+
+    /// Creates the SDK client of the update socket. `config` replaces `defaultClientConfig()` when given; a config with a
+    /// timeout below `ImpulseRequestTimeouts.updateCallSeconds` makes the update calls fail, so keep it at least that.
+    public static func makeClient(
+        endpoint: String,
+        config: CentrifugeClientConfig? = nil,
+        delegate: CentrifugeClientDelegate? = nil
+    ) -> CentrifugeClient {
+        return CentrifugeClient(
+            endpoint: endpoint,
+            config: ImpulseUpdateSocketCarrier.resolveClientConfig(config),
+            delegate: delegate
+        )
+    }
+
+
     /// Creates the carrier on the SDK client of the update socket.
     public init(client: CentrifugeClient) {
         self.transport = client
@@ -84,6 +108,12 @@ public final class ImpulseUpdateSocketCarrier: ImpulseRequestCarrier, @unchecked
                 }
             }
         })
+    }
+
+
+    /// The configuration a client is created with: the given one, or the default one.
+    internal static func resolveClientConfig(_ config: CentrifugeClientConfig?) -> CentrifugeClientConfig {
+        return config ?? ImpulseUpdateSocketCarrier.defaultClientConfig()
     }
 
 

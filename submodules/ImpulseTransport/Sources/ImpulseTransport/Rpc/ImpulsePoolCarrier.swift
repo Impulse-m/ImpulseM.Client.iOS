@@ -42,6 +42,14 @@ internal protocol ImpulsePoolMain: AnyObject {
 }
 
 
+/// Creates the main client of a pool from its configuration and its delegate.
+internal typealias ImpulsePoolMainClientFactory = (
+    String,
+    CentrifugeClientConfig,
+    ImpulsePoolMainDelegate
+) throws -> CentrifugeClient
+
+
 /// The pool the carrier sends calls through. Returns a closure that cancels the call.
 internal protocol ImpulsePoolTransport: AnyObject {
     func send(
@@ -155,18 +163,32 @@ public final class ImpulsePoolCarrier {
     private var timer: DispatchSourceTimer? = nil
 
 
-    /// Creates a carrier with its own main client and pool on the endpoint.
+    /// Creates a carrier with its own main client and pool on the endpoint. The main client is created with
+    /// `mainConfig`, or with `makeMainConfig()` when none is given.
     /// - Throws: `CentrifugeError.configurationError` when the pool options cannot work.
-    public init(
+    public convenience init(
         endpoint: String,
-        identityRenewal: @escaping ImpulsePoolIdentityRenewal
+        identityRenewal: @escaping ImpulsePoolIdentityRenewal,
+        mainConfig: CentrifugeClientConfig? = nil
+    ) throws {
+        try self.init(
+            endpoint: endpoint,
+            identityRenewal: identityRenewal,
+            mainConfig: mainConfig,
+            makeMainClient: ImpulsePoolCarrier.createMainClient
+        )
+    }
+
+
+    internal init(
+        endpoint: String,
+        identityRenewal: @escaping ImpulsePoolIdentityRenewal,
+        mainConfig: CentrifugeClientConfig?,
+        makeMainClient: ImpulsePoolMainClientFactory
     ) throws {
         let delegate: ImpulsePoolMainDelegate = ImpulsePoolMainDelegate()
-        let main: CentrifugeClient = CentrifugeClient(
-            endpoint: endpoint,
-            config: ImpulsePoolCarrier.makeMainConfig(),
-            delegate: delegate
-        )
+        let config: CentrifugeClientConfig = mainConfig ?? ImpulsePoolCarrier.makeMainConfig()
+        let main: CentrifugeClient = try makeMainClient(endpoint, config, delegate)
         let pool: CentrifugeRpcPool = try CentrifugeRpcPool.create(
             main: main,
             options: ImpulsePoolCarrier.makePoolOptions(endpoint: endpoint)
@@ -286,9 +308,24 @@ public final class ImpulsePoolCarrier {
     }
 
 
+    /// The configuration of the main client when none is injected: the socket policy (reconnect backoff from 1 to 30 seconds,
+    /// the ping watchdog) under the pool's client name, with no token.
     internal static func makeMainConfig() -> CentrifugeClientConfig {
-        return CentrifugeClientConfig(
-            name: ImpulsePoolCarrier.clientName
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+        config.name = ImpulsePoolCarrier.clientName
+        return config
+    }
+
+
+    internal static func createMainClient(
+        endpoint: String,
+        config: CentrifugeClientConfig,
+        delegate: ImpulsePoolMainDelegate
+    ) -> CentrifugeClient {
+        return CentrifugeClient(
+            endpoint: endpoint,
+            config: config,
+            delegate: delegate
         )
     }
 

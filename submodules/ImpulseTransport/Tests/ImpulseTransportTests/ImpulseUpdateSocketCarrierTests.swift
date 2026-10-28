@@ -217,4 +217,39 @@ final class ImpulseUpdateSocketCarrierTests: XCTestCase {
         let cancelled: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 17, appCode: 0, appType: "", metadata: [:])
         XCTAssertEqual(result, .failure(cancelled))
     }
+
+
+    func testDefaultClientConfigIsTheSocketPolicyWithTheUpdateTimeout() {
+        let config: CentrifugeClientConfig = ImpulseUpdateSocketCarrier.defaultClientConfig()
+
+        XCTAssertEqual(config.minReconnectDelay, ImpulseSocketPolicy.minReconnectDelaySeconds)
+        XCTAssertEqual(config.maxReconnectDelay, ImpulseSocketPolicy.maxReconnectDelaySeconds)
+        XCTAssertEqual(config.maxServerPingDelay, ImpulseSocketPolicy.maxServerPingDelaySeconds)
+        XCTAssertEqual(config.timeout, ImpulseRequestTimeouts.updateCallSeconds)
+        XCTAssertTrue(config.useNativeWebSocket)
+        XCTAssertTrue(config.token.isEmpty)
+    }
+
+
+    func testGivenClientConfigReplacesTheDefault() {
+        let given: CentrifugeClientConfig = CentrifugeClientConfig(
+            timeout: 45.0,
+            minReconnectDelay: 2.0,
+            name: "given-update"
+        )
+
+        let resolved: CentrifugeClientConfig = ImpulseUpdateSocketCarrier.resolveClientConfig(given)
+
+        XCTAssertEqual(resolved.timeout, 45.0)
+        XCTAssertEqual(resolved.minReconnectDelay, 2.0)
+        XCTAssertEqual(resolved.name, "given-update")
+    }
+
+
+    func testMissingClientConfigFallsBackToTheDefault() {
+        let resolved: CentrifugeClientConfig = ImpulseUpdateSocketCarrier.resolveClientConfig(nil)
+
+        XCTAssertEqual(resolved.timeout, ImpulseRequestTimeouts.updateCallSeconds)
+        XCTAssertEqual(resolved.maxReconnectDelay, ImpulseSocketPolicy.maxReconnectDelaySeconds)
+    }
 }

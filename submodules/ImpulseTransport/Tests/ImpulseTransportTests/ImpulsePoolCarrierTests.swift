@@ -63,6 +63,11 @@ private enum FakeRenewalError: Error {
 }
 
 
+private final class MainConfigRecorder {
+    var config: CentrifugeClientConfig? = nil
+}
+
+
 final class ImpulsePoolCarrierTests: XCTestCase {
     func testPoolOptionsNeverPresentToken() {
         let options: CentrifugeRpcPoolOptions = ImpulsePoolCarrier.makePoolOptions(endpoint: "wss://rpc.impulsem.io/ws")
@@ -76,6 +81,42 @@ final class ImpulsePoolCarrierTests: XCTestCase {
         let config: CentrifugeClientConfig = ImpulsePoolCarrier.makeMainConfig()
         XCTAssertTrue(config.token.isEmpty)
         XCTAssertNil(config.tokenGetter)
+    }
+
+
+    func testInjectedMainConfigReachesTheMainClient() throws {
+        let recorder: MainConfigRecorder = MainConfigRecorder()
+        let injected: CentrifugeClientConfig = CentrifugeClientConfig(
+            minReconnectDelay: 1.0,
+            maxReconnectDelay: 30.0,
+            maxServerPingDelay: 10.0,
+            name: "injected-main",
+            useNativeWebSocket: true
+        )
+
+        _ = try makeRecordingCarrier(mainConfig: injected, recorder: recorder)
+
+        let received: CentrifugeClientConfig = try XCTUnwrap(recorder.config)
+        XCTAssertEqual(received.name, "injected-main")
+        XCTAssertEqual(received.minReconnectDelay, 1.0)
+        XCTAssertEqual(received.maxReconnectDelay, 30.0)
+        XCTAssertEqual(received.maxServerPingDelay, 10.0)
+        XCTAssertTrue(received.useNativeWebSocket)
+    }
+
+
+    func testMainClientKeepsTheDefaultConfigWhenNoneIsInjected() throws {
+        let recorder: MainConfigRecorder = MainConfigRecorder()
+
+        _ = try makeRecordingCarrier(mainConfig: nil, recorder: recorder)
+
+        let received: CentrifugeClientConfig = try XCTUnwrap(recorder.config)
+        XCTAssertEqual(received.name, ImpulsePoolCarrier.clientName)
+        XCTAssertEqual(received.minReconnectDelay, ImpulseSocketPolicy.minReconnectDelaySeconds)
+        XCTAssertEqual(received.maxReconnectDelay, ImpulseSocketPolicy.maxReconnectDelaySeconds)
+        XCTAssertEqual(received.maxServerPingDelay, ImpulseSocketPolicy.maxServerPingDelaySeconds)
+        XCTAssertTrue(received.useNativeWebSocket)
+        XCTAssertTrue(received.token.isEmpty)
     }
 
 
@@ -284,6 +325,24 @@ final class ImpulsePoolCarrierTests: XCTestCase {
         }
         wait(for: [expectation], timeout: 10)
         XCTAssertEqual(received, ImpulsePoolFailure.mainDisconnected)
+    }
+
+
+    private func makeRecordingCarrier(
+        mainConfig: CentrifugeClientConfig?,
+        recorder: MainConfigRecorder
+    ) throws -> ImpulsePoolCarrier {
+        return try ImpulsePoolCarrier(
+            endpoint: "wss://rpc.impulsem.io/connection/websocket",
+            identityRenewal: { (completion: @escaping (Result<Void, Error>) -> Void) -> Void in
+                completion(.success(()))
+            },
+            mainConfig: mainConfig,
+            makeMainClient: { (endpoint: String, config: CentrifugeClientConfig, delegate: ImpulsePoolMainDelegate) throws -> CentrifugeClient in
+                recorder.config = config
+                return CentrifugeClient(endpoint: endpoint, config: config, delegate: delegate)
+            }
+        )
     }
 
 
