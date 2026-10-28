@@ -1959,12 +1959,12 @@ plist_fragment(
                 <string>BlueIcon@3x.png</string>
             </array>
             <key>UTTypeIdentifier</key>
-            <string>net.impulsem.messenger.theme</string>
+            <string>org.telegram.Telegram-iOS.theme</string>
             <key>UTTypeTagSpecification</key>
             <dict>
                 <key>public.filename-extension</key>
                 <array>
-                    <string>impulsem-theme</string>
+                    <string>tgios-theme</string>
                 </array>
             </dict>
         </dict>
