@@ -12,6 +12,14 @@ public typealias ImpulseNetworkSessionBuilder = (
     NetworkEngineSessionDelegate?
 ) -> NetworkEngineSession
 
+/// What the engine runs besides its sessions while it is active: the connections of the account and the pool that
+/// serves the identity. `activate()` starts it and `deactivate()` stops it.
+public protocol ImpulseNetworkLifecycle: AnyObject {
+    func start()
+
+    func stop()
+}
+
 /// The network engine of the ImpulseM backend. It creates the sessions through the injected builder and, while
 /// it is active, takes over the key and authorization transfers of MTContext, which go nowhere over MtProtoKit's
 /// connections in that case.
@@ -21,14 +29,17 @@ public final class ImpulseNetworkEngine: NetworkEngine {
     private let context: MTContext
     private let sessionBuilder: ImpulseNetworkSessionBuilder
     private let actions: ImpulseNoNetworkActions
+    private let lifecycle: ImpulseNetworkLifecycle?
 
     public init(
         context: MTContext,
-        sessionBuilder: @escaping ImpulseNetworkSessionBuilder
+        sessionBuilder: @escaping ImpulseNetworkSessionBuilder,
+        lifecycle: ImpulseNetworkLifecycle? = nil
     ) {
         self.context = context
         self.sessionBuilder = sessionBuilder
         self.actions = ImpulseNoNetworkActions(context: context)
+        self.lifecycle = lifecycle
     }
 
     public func makeSession(
@@ -49,13 +60,16 @@ public final class ImpulseNetworkEngine: NetworkEngine {
         return key.map({ String(format: "%02x", $0) }).joined()
     }
 
-    /// The key and transfer actions of the context go over no network while this engine carries it.
+    /// The key and transfer actions of the context go over no network while this engine carries it, and the
+    /// lifecycle starts the account's connections.
     public func activate() {
         self.actions.install()
+        self.lifecycle?.start()
     }
 
-    /// The factories of the context go back to MTContext's own actions.
+    /// The factories of the context go back to MTContext's own actions, and the lifecycle stops the connections.
     public func deactivate() {
         self.actions.uninstall()
+        self.lifecycle?.stop()
     }
 }

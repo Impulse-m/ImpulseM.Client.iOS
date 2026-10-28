@@ -16,6 +16,10 @@ let package = Package(
         .package(name: "SSignalKit", path: "../SSignalKit"),
         .package(name: "ImpulseTransport", path: "../ImpulseTransport"),
         .package(name: "EncryptionProvider", path: "../EncryptionProvider"),
+        .package(
+            url: "https://github.com/Impulse-m/ImpulseM.Centrifugo.Client.Swift.git",
+            from: "2.0.0"
+        ),
     ],
     targets: [
         .target(
@@ -25,6 +29,7 @@ let package = Package(
                 .product(name: "MtProtoKit", package: "MtProtoKit", condition: nil),
                 .product(name: "SwiftSignalKit", package: "SSignalKit", condition: nil),
                 .product(name: "ImpulseTransport", package: "ImpulseTransport", condition: nil),
+                .product(name: "SwiftCentrifuge", package: "impulsem.centrifugo.client.swift", condition: nil),
             ],
             path: "Sources/ImpulseNetworkEngine"),
         .testTarget(
@@ -36,6 +41,7 @@ let package = Package(
                 .product(name: "SwiftSignalKit", package: "SSignalKit", condition: nil),
                 .product(name: "EncryptionProvider", package: "EncryptionProvider", condition: nil),
                 .product(name: "ImpulseTransport", package: "ImpulseTransport", condition: nil),
+                .product(name: "SwiftCentrifuge", package: "impulsem.centrifugo.client.swift", condition: nil),
             ],
             path: "Tests/ImpulseNetworkEngineTests"),
     ]

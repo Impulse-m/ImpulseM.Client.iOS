@@ -1,0 +1,316 @@
+import Foundation
+import SwiftCentrifuge
+import TelegramCore
+import ImpulseTransport
+
+
+/// What the composition root takes from its caller. The app supplies the system keychain and the production endpoints;
+/// the tests supply doubles.
+struct ImpulseNetworkCompositionInputs {
+    let endpoints: ImpulseEndpoints
+    let mapping: ImpulseMapping
+    let keychain: any ImpulseKeychain
+    let keychainAccessGroup: String
+    let identityClock: any ImpulseIdentityClock
+    let identityScheduler: any ImpulseIdentityScheduler
+    let declaration: ImpulseDeclaration
+    let updateBridge: ImpulseUpdateBridge
+}
+
+
+/// The composition root of one account's ImpulseM transport. It builds the parts of `ImpulseTransport` that the sessions
+/// share (the endpoints, the codec, the session tokens and the connection identity, the update socket and the pool clients
+/// with their carriers, the media fleet, the connection declaration, the request service, the realtime client and the
+/// telemetry), and it creates the sessions of the engine on them.
+///
+/// The update socket and the pool use the socket policy of the transport: reconnects back off from 1 to 30 seconds, and the
+/// ping watchdog runs on the server's ping delay. The update socket presents the access token of the session, or the connection
+/// identity while there is no session.
+final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetworkTransportControl {
+    let transcoder: ImpulseTranscoder
+    let sessionStore: ImpulseSessionStore
+    let credentials: ImpulseConnectionCredentialCache
+    let tokens: ImpulseTokens
+    let identity: ImpulseIdentityManager
+    let pool: ImpulsePoolCarrier
+    let poolRequestCarrier: ImpulsePoolRequestCarrier
+    let updateClient: CentrifugeClient
+    let updateSocket: ImpulseCentrifugeSocket
+    let updateCarrier: ImpulseUpdateSocketCarrier
+    let mediaFleet: ImpulseMediaFleet
+    let mediaCarrier: ImpulseMediaRequestCarrier
+    let declarer: ImpulseConnectionDeclarer
+    let requestService: ImpulseRequestService
+    let telemetry: ImpulseTelemetry
+    let realtime: ImpulseRealtime
+    let forwarder: ImpulseRealtimeForwarder
+
+    private let identityCarrier: ImpulsePoolIdentityCarrier
+    private let declaration: ImpulseDeclaration
+    private let updateBridge: ImpulseUpdateBridge
+    private let lock: NSLock = NSLock()
+    private var started: Bool = false
+
+
+    init(inputs: ImpulseNetworkCompositionInputs) throws {
+        let link: ImpulseAccountLink = ImpulseAccountLink()
+        let forwarder: ImpulseRealtimeForwarder = ImpulseRealtimeForwarder()
+        let transcoder: ImpulseTranscoder = ImpulseTranscoder(mapping: inputs.mapping)
+        let store: ImpulseSessionStore = ImpulseSessionStore(
+            accountIndex: 0,
+            accessGroup: inputs.keychainAccessGroup,
+            keychain: inputs.keychain
+        )
+        let credentials: ImpulseConnectionCredentialCache = ImpulseConnectionCredentialCache()
+
+        let pool: ImpulsePoolCarrier = try ImpulsePoolCarrier(
+            endpoint: inputs.endpoints.poolUrl(),
+            identityRenewal: { (completion: @escaping (Result<Void, Error>) -> Void) -> Void in
+                link.renewIdentity(completion: completion)
+            },
+            mainConfig: ImpulseNetworkCompositionRoot.makePoolConfig()
+        )
+        let poolRequestCarrier: ImpulsePoolRequestCarrier = ImpulsePoolRequestCarrier(pool: pool)
+        let identityCarrier: ImpulsePoolIdentityCarrier = ImpulsePoolIdentityCarrier(carrier: poolRequestCarrier)
+        let identity: ImpulseIdentityManager = ImpulseIdentityManager(
+            poolCarrier: identityCarrier,
+            store: store.identityStore(),
+            clock: inputs.identityClock,
+            scheduler: inputs.identityScheduler,
+            apiId: inputs.declaration.apiId
+        )
+
+        let updateClient: CentrifugeClient = ImpulseUpdateSocketCarrier.makeClient(
+            endpoint: inputs.endpoints.realtimeUrl(),
+            config: ImpulseNetworkCompositionRoot.makeUpdateConfig(
+                tokenGetter: ImpulseNetworkCompositionRoot.connectionTokenGetter(link: link)
+            )
+        )
+        let updateSocket: ImpulseCentrifugeSocket = ImpulseCentrifugeSocket(client: updateClient)
+        let updateCarrier: ImpulseUpdateSocketCarrier = ImpulseUpdateSocketCarrier(client: updateClient)
+
+        let mediaFleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
+            return ImpulseMediaSocketTransport(
+                endpoint: endpoint,
+                tokenGetter: ImpulseNetworkCompositionRoot.mediaTokenGetter(link: link)
+            )
+        })
+        let mediaCarrier: ImpulseMediaRequestCarrier = ImpulseMediaRequestCarrier(fleet: mediaFleet)
+
+        let refreshTransport: ImpulseCarrierRefreshTransport = ImpulseCarrierRefreshTransport(
+            updateSocket: updateCarrier,
+            poolFleet: poolRequestCarrier
+        )
+        let tokens: ImpulseTokens = ImpulseTokens(storage: store, transport: refreshTransport)
+        let declarer: ImpulseConnectionDeclarer = ImpulseConnectionDeclarer(
+            carrier: updateCarrier,
+            credentials: credentials
+        )
+        let requestService: ImpulseRequestService = ImpulseRequestService(
+            session: tokens,
+            updateCarrier: updateCarrier,
+            mediaCarrier: mediaCarrier,
+            poolCarrier: poolRequestCarrier,
+            declarations: declarer,
+            signedIn: store.isLoggedIn,
+            onAuthorizationRequired: {}
+        )
+        let telemetry: ImpulseTelemetry = ImpulseTelemetry(
+            sink: ImpulseRequestTelemetrySink(transcoder: transcoder, requester: requestService)
+        )
+
+        let realtime: ImpulseRealtime = ImpulseRealtime(
+            mapping: inputs.mapping,
+            socket: updateSocket,
+            lanes: ImpulseLanes(),
+            differenceHandler: { (request: ImpulseDifferenceRequest) -> Void in
+                forwarder.forward(difference: request)
+            },
+            updateHandler: { (updates: ImpulseRealtimeUpdates) -> Void in
+                forwarder.forward(updates: updates)
+            }
+        )
+
+        link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials))
+
+        self.transcoder = transcoder
+        self.sessionStore = store
+        self.credentials = credentials
+        self.tokens = tokens
+        self.identity = identity
+        self.pool = pool
+        self.poolRequestCarrier = poolRequestCarrier
+        self.identityCarrier = identityCarrier
+        self.updateClient = updateClient
+        self.updateSocket = updateSocket
+        self.updateCarrier = updateCarrier
+        self.mediaFleet = mediaFleet
+        self.mediaCarrier = mediaCarrier
+        self.declarer = declarer
+        self.requestService = requestService
+        self.telemetry = telemetry
+        self.realtime = realtime
+        self.forwarder = forwarder
+        self.declaration = inputs.declaration
+        self.updateBridge = inputs.updateBridge
+    }
+
+
+    /// The socket policy of the update socket: the 1 to 30 second reconnect backoff, the ping watchdog, and the call timeout
+    /// of the update calls, which the SDK requires to be at least the call deadline. The token getter supplies the connection token.
+    static func makeUpdateConfig(tokenGetter: CentrifugeConnectionTokenGetter?) -> CentrifugeClientConfig {
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+        config.timeout = ImpulseRequestTimeouts.updateCallSeconds
+        config.tokenGetter = tokenGetter
+        return config
+    }
+
+
+    /// The socket policy of the pool's main client: the same backoff and watchdog, the pool's client name and call timeout, and no token.
+    static func makePoolConfig() -> CentrifugeClientConfig {
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+        config.name = ImpulsePoolCarrier.clientName
+        config.timeout = ImpulsePoolCarrier.callTimeoutSeconds
+        return config
+    }
+
+
+    /// The role of a session of the engine as the transport names it.
+    static func sessionRole(_ role: NetworkEngineSessionRole) -> ImpulseSessionRole {
+        switch role {
+        case .main:
+            return .main
+
+        case .worker(let masterDatacenterId, let isMedia, let isCdn):
+            return .worker(masterDatacenterId: masterDatacenterId, isMedia: isMedia, isCdn: isCdn)
+        }
+    }
+
+
+    static func connectionTokenGetter(link: ImpulseAccountLink) -> CentrifugeConnectionTokenGetter {
+        return { (_ event: CentrifugeConnectionTokenEvent, _ completion: @escaping (Result<String, Error>) -> Void) -> Void in
+            link.connectionToken(completion: completion)
+        }
+    }
+
+
+    static func mediaTokenGetter(link: ImpulseAccountLink) -> CentrifugeConnectionTokenGetter {
+        return { (_ event: CentrifugeConnectionTokenEvent, _ completion: @escaping (Result<String, Error>) -> Void) -> Void in
+            link.mediaToken(completion: completion)
+        }
+    }
+
+
+    /// Starts the account's connections: the pool connects its main client, the stored identity is loaded and scheduled for
+    /// renewal, the credential cache follows the session and the identity, and the declaration is set on the update socket.
+    /// A start while started changes nothing.
+    func start() {
+        self.lock.lock()
+        let alreadyStarted: Bool = self.started
+        self.started = true
+        self.lock.unlock()
+        if alreadyStarted {
+            return
+        }
+
+        self.pool.start()
+
+        let identity: ImpulseIdentityManager = self.identity
+        let identityCarrier: ImpulsePoolIdentityCarrier = self.identityCarrier
+        let tokens: ImpulseTokens = self.tokens
+        let credentials: ImpulseConnectionCredentialCache = self.credentials
+        let declarer: ImpulseConnectionDeclarer = self.declarer
+        let declaration: ImpulseDeclaration = self.declaration
+        Task {
+            await identity.setRenewalCarrier(identityCarrier)
+            await identity.start()
+            await credentials.follow(tokens: tokens, identity: identity)
+            await declarer.setDeclaration(declaration)
+        }
+    }
+
+
+    /// Stops the connections. The pool stops restarting its main client, and the update socket disconnects.
+    func stop() {
+        self.lock.lock()
+        self.started = false
+        self.lock.unlock()
+
+        self.pool.stop()
+        self.updateClient.disconnect()
+    }
+
+
+    /// Drops the update socket while the sessions are paused, and connects it again on resume. The sessions reconnect on their own
+    /// within the socket policy.
+    func setPaused(_ paused: Bool) {
+        if paused {
+            self.updateClient.disconnect()
+        } else {
+            self.updateClient.connect()
+        }
+    }
+
+
+    /// The keepalive of the socket follows the SDK's ping watchdog, which does not depend on the user's presence.
+    func setOnline(_ online: Bool) {
+    }
+
+
+    /// Creates one session of the engine. The main session becomes the receiver of the realtime client; a worker session does not.
+    func makeSession(
+        datacenterId: Int,
+        role: NetworkEngineSessionRole,
+        delegate: NetworkEngineSessionDelegate?
+    ) -> NetworkEngineSession {
+        let isMain: Bool = role == .main
+        let control: ImpulseNetworkTransportControl?
+        if isMain {
+            control = self
+        } else {
+            control = nil
+        }
+        let session: ImpulseNetworkEngineSession = ImpulseNetworkEngineSession(
+            datacenterId: datacenterId,
+            role: role,
+            delegate: delegate,
+            updateBridge: self.updateBridge,
+            timing: ImpulseNetworkRetryTiming.canonical,
+            control: control,
+            onParseFailure: {
+                Logger.shared.log("ImpulseNetwork", "A reply of datacenter \(datacenterId) did not parse")
+            },
+            makeTransport: { (events: ImpulseNetworkSessionEvents) -> ImpulseNetworkSession in
+                return self.makeTransport(
+                    datacenterId: datacenterId,
+                    role: role,
+                    events: events
+                )
+            }
+        )
+        if isMain {
+            self.forwarder.setDelivery(session.transport)
+        }
+        return session
+    }
+
+
+    private func makeTransport(
+        datacenterId: Int,
+        role: NetworkEngineSessionRole,
+        events: ImpulseNetworkSessionEvents
+    ) -> ImpulseNetworkSession {
+        return ImpulseNetworkSession(
+            datacenterId: datacenterId,
+            role: ImpulseNetworkCompositionRoot.sessionRole(role),
+            transcoder: self.transcoder,
+            session: self.tokens,
+            updateCarrier: self.updateCarrier,
+            mediaCarrier: self.mediaCarrier,
+            poolCarrier: self.poolRequestCarrier,
+            declarations: self.declarer,
+            signedIn: self.sessionStore.isLoggedIn,
+            delegate: events
+        )
+    }
+}
