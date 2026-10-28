@@ -85,8 +85,9 @@ internal enum ImpulseRealtimeBody: Equatable {
 }
 
 
-/// The realtime side of one account: the user lane and the channel lanes of one connection. A publication is
-/// decoded through the envelope and the transcoder. Gaps and undecodable publications become difference requests.
+/// The realtime side of one account: the user lane, the channel lanes, and the session and identity lanes of one
+/// connection. A publication is decoded through the envelope and the transcoder, then routed by lane. Gaps and
+/// undecodable publications become difference requests.
 ///
 /// Every public entry point is thread-safe. Handlers run on the thread that reported the event, and never under the lock.
 public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
@@ -105,7 +106,7 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
 
 
     private let transcoder: ImpulseTranscoder
-    private let updateConstructorIds: Set<UInt32>
+    private let router: ImpulseLaneRouter
     private let socket: any ImpulseRealtimeSocket
     private let lanes: ImpulseLanes
     private let differenceHandler: (ImpulseDifferenceRequest) -> Void
@@ -119,6 +120,8 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
     private var laneCandidates: [ImpulseLaneCandidate] = []
     private var openedChannelId: Int64 = 0
     private var pendingRecompute: DispatchWorkItem? = nil
+    private var sessionLaneName: String? = nil
+    private var identityLaneName: String? = nil
 
 
     public init(
@@ -129,9 +132,7 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
         updateHandler: @escaping (ImpulseRealtimeUpdates) -> Void
     ) {
         self.transcoder = ImpulseTranscoder(mapping: mapping)
-        self.updateConstructorIds = Set(mapping.constructors(ofType: ImpulseRealtime.updatesTypeName).map { (constructor: ImpulseMappingConstructor) -> UInt32 in
-            return constructor.id
-        })
+        self.router = ImpulseLaneRouter(mapping: mapping)
         self.socket = socket
         self.lanes = lanes
         self.differenceHandler = differenceHandler
@@ -212,6 +213,90 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
     }
 
 
+    /// Subscribes the session lane `session:{userId}:{sessionHash}`, which carries the call signalling and the call states
+    /// addressed to this session. A different session replaces the lane.
+    public func subscribeSessionLane(
+        userId: Int64,
+        sessionHash: Int64
+    ) {
+        let name: String = ImpulseLaneRouter.sessionLane(userId: userId, sessionHash: sessionHash)
+
+        lock.lock()
+        let previous: String? = sessionLaneName
+        sessionLaneName = name
+        lock.unlock()
+
+        if previous == name {
+            return
+        }
+
+        if let stale: String = previous {
+            socket.unsubscribe(channel: stale)
+        }
+
+        socket.subscribe(
+            channel: name,
+            positioned: ImpulseRealtime.lanePositioned,
+            recoverable: ImpulseRealtime.laneRecoverable
+        )
+    }
+
+
+    /// Drops the session lane when one is subscribed.
+    public func dropSessionLane() {
+        lock.lock()
+        let previous: String? = sessionLaneName
+        sessionLaneName = nil
+        lock.unlock()
+
+        if let stale: String = previous {
+            socket.unsubscribe(channel: stale)
+        }
+    }
+
+
+    /// Subscribes the identity lane `identity:{identityId}`, which carries the QR login of a signed-out slot.
+    public func subscribeIdentityLane(identityId: String) {
+        guard !identityId.isEmpty else {
+            return
+        }
+
+        let name: String = ImpulseLaneRouter.identityLane(identityId: identityId)
+
+        lock.lock()
+        let previous: String? = identityLaneName
+        identityLaneName = name
+        lock.unlock()
+
+        if previous == name {
+            return
+        }
+
+        if let stale: String = previous {
+            socket.unsubscribe(channel: stale)
+        }
+
+        socket.subscribe(
+            channel: name,
+            positioned: ImpulseRealtime.lanePositioned,
+            recoverable: ImpulseRealtime.laneRecoverable
+        )
+    }
+
+
+    /// Drops the identity lane when one is subscribed.
+    public func dropIdentityLane() {
+        lock.lock()
+        let previous: String? = identityLaneName
+        identityLaneName = nil
+        lock.unlock()
+
+        if let stale: String = previous {
+            socket.unsubscribe(channel: stale)
+        }
+    }
+
+
     public func handleSubscribed(
         channel: String,
         recovered: Bool,
@@ -241,7 +326,7 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
         channel: String,
         data: Data
     ) {
-        if !isRealtimeLane(channel) {
+        if ImpulseLaneRouter.kind(of: channel) == .unknown {
             return
         }
 
@@ -305,11 +390,6 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
     }
 
 
-    private func isRealtimeLane(_ channel: String) -> Bool {
-        return channel.hasPrefix(ImpulseRealtime.userLanePrefix) || channel.hasPrefix(ImpulseRealtime.channelLanePrefix)
-    }
-
-
     private func decode(
         channel: String,
         envelope: ImpulseEnvelope
@@ -326,30 +406,34 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
             return
         }
 
-        switch ImpulseRealtime.classify(tl: tl, updateConstructorIds: updateConstructorIds) {
-        case .updates:
-            updateHandler(ImpulseRealtimeUpdates(channel: channel, tl: tl))
-        case .updatesTooLong:
-            differenceHandler(.account(.updatesTooLong))
-        case .unexpected:
-            differenceHandler(.account(.publicationUnexpectedConstructor))
+        switch router.route(channel: channel, tl: tl) {
+        case .updates(let updates):
+            updateHandler(updates)
+        case .difference(let request):
+            differenceHandler(request)
+        case .ignore:
+            break
         }
     }
 
 
     /// Requests the difference of a lane whose position was lost. A user lane asks for the account difference, and a channel
     /// lane for the difference of that channel. Undecodable publications never come here: they always ask for the account difference.
+    /// The session lane asks for the account difference, because its call states are durable there. The identity and
+    /// system lanes ask for nothing.
     private func requestDifference(
         channel: String,
         reason: ImpulseDifferenceReason
     ) {
-        if channel.hasPrefix(ImpulseRealtime.userLanePrefix) {
+        switch ImpulseLaneRouter.kind(of: channel) {
+        case .user, .session:
             differenceHandler(.account(reason))
-            return
-        }
-
-        if let channelId: Int64 = ImpulseRealtime.channelId(of: channel) {
-            differenceHandler(.channel(channelId: channelId, reason: reason))
+        case .channel:
+            if let channelId: Int64 = ImpulseRealtime.channelId(of: channel) {
+                differenceHandler(.channel(channelId: channelId, reason: reason))
+            }
+        case .identity, .system, .unknown:
+            break
         }
     }
 
