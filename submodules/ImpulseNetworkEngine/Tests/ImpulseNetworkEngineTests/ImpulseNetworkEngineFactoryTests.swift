@@ -144,7 +144,7 @@ final class ImpulseFactoryKeychain: ImpulseKeychain, @unchecked Sendable {
     func readData(
         service: String,
         account: String,
-        accessGroup: String
+        accessGroup: String?
     ) -> Data? {
         self.lock.lock()
         defer {
@@ -158,19 +158,18 @@ final class ImpulseFactoryKeychain: ImpulseKeychain, @unchecked Sendable {
         _ data: Data,
         service: String,
         account: String,
-        accessGroup: String
-    ) -> Bool {
+        accessGroup: String?
+    ) {
         self.lock.lock()
         self.items[ImpulseFactoryKeychain.key(service: service, account: account, accessGroup: accessGroup)] = data
         self.lock.unlock()
-        return true
     }
 
 
     func deleteData(
         service: String,
         account: String,
-        accessGroup: String
+        accessGroup: String?
     ) {
         self.lock.lock()
         self.items.removeValue(forKey: ImpulseFactoryKeychain.key(service: service, account: account, accessGroup: accessGroup))
@@ -181,9 +180,9 @@ final class ImpulseFactoryKeychain: ImpulseKeychain, @unchecked Sendable {
     private static func key(
         service: String,
         account: String,
-        accessGroup: String
+        accessGroup: String?
     ) -> String {
-        return service + "/" + account + "/" + accessGroup
+        return service + "/" + account + "/" + (accessGroup ?? "<own items>")
     }
 }
 

@@ -1,31 +1,43 @@
 import Foundation
+import os
 import Security
 
 
+/// A keychain call that the system refused, with the status it returned.
+public struct ImpulseKeychainError: Error, Equatable, Sendable {
+    public let status: OSStatus
+
+
+    public init(status: OSStatus) {
+        self.status = status
+    }
+}
+
+
 /// A generic-password store that holds the items of the ImpulseM session. The system keychain and an in-memory double
-/// both implement it.
+/// both implement it. A nil access group addresses the app's own items, which carry no access group.
 public protocol ImpulseKeychain: Sendable {
-    /// Returns the stored data of one item, or nil when no item matches.
+    /// Returns the stored data of one item, or nil when no item matches. Throws when the system refuses the call.
     func readData(
         service: String,
         account: String,
-        accessGroup: String
-    ) -> Data?
+        accessGroup: String?
+    ) throws -> Data?
 
-    /// Stores the data of one item, replacing an earlier value. Returns false when the write failed.
+    /// Stores the data of one item, replacing an earlier value. Throws when the write failed.
     func writeData(
         _ data: Data,
         service: String,
         account: String,
-        accessGroup: String
-    ) -> Bool
+        accessGroup: String?
+    ) throws
 
-    /// Removes one item. Removing a missing item does nothing.
+    /// Removes one item. Removing a missing item does nothing. Throws when the system refuses the call.
     func deleteData(
         service: String,
         account: String,
-        accessGroup: String
-    )
+        accessGroup: String?
+    ) throws
 }
 
 
@@ -34,13 +46,15 @@ enum ImpulseKeychainQuery {
     static func item(
         service: String,
         account: String,
-        accessGroup: String
+        accessGroup: String?
     ) -> [String: Any] {
         var query: [String: Any] = [:]
         query[kSecClass as String] = kSecClassGenericPassword
         query[kSecAttrService as String] = service
         query[kSecAttrAccount as String] = account
-        query[kSecAttrAccessGroup as String] = accessGroup
+        if let accessGroup: String = accessGroup {
+            query[kSecAttrAccessGroup as String] = accessGroup
+        }
         query[kSecUseDataProtectionKeychain as String] = true
         return query
     }
@@ -50,7 +64,7 @@ enum ImpulseKeychainQuery {
     static func addition(
         service: String,
         account: String,
-        accessGroup: String,
+        accessGroup: String?,
         data: Data
     ) -> [String: Any] {
         var query: [String: Any] = item(
@@ -66,7 +80,7 @@ enum ImpulseKeychainQuery {
 
 
 /// The system keychain. Items are written with an explicit access group, so an installed official Telegram cannot read
-/// them.
+/// them. A nil access group addresses the app's own items.
 public struct ImpulseSystemKeychain: ImpulseKeychain {
     public init() {
     }
@@ -75,8 +89,8 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
     public func readData(
         service: String,
         account: String,
-        accessGroup: String
-    ) -> Data? {
+        accessGroup: String?
+    ) throws -> Data? {
         var query: [String: Any] = ImpulseKeychainQuery.item(
             service: service,
             account: account,
@@ -86,8 +100,11 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status: OSStatus = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else {
+        if status == errSecItemNotFound {
             return nil
+        }
+        guard status == errSecSuccess else {
+            throw ImpulseKeychainError(status: status)
         }
         return result as? Data
     }
@@ -97,8 +114,8 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
         _ data: Data,
         service: String,
         account: String,
-        accessGroup: String
-    ) -> Bool {
+        accessGroup: String?
+    ) throws {
         let query: [String: Any] = ImpulseKeychainQuery.item(
             service: service,
             account: account,
@@ -107,10 +124,10 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
         let update: [String: Any] = [kSecValueData as String: data]
         let updateStatus: OSStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if updateStatus == errSecSuccess {
-            return true
+            return
         }
         guard updateStatus == errSecItemNotFound else {
-            return false
+            throw ImpulseKeychainError(status: updateStatus)
         }
         let addQuery: [String: Any] = ImpulseKeychainQuery.addition(
             service: service,
@@ -119,21 +136,118 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
             data: data
         )
         let addStatus: OSStatus = SecItemAdd(addQuery as CFDictionary, nil)
-        return addStatus == errSecSuccess
+        guard addStatus == errSecSuccess else {
+            throw ImpulseKeychainError(status: addStatus)
+        }
     }
 
 
     public func deleteData(
         service: String,
         account: String,
-        accessGroup: String
-    ) {
+        accessGroup: String?
+    ) throws {
         let query: [String: Any] = ImpulseKeychainQuery.item(
             service: service,
             account: account,
             accessGroup: accessGroup
         )
-        _ = SecItemDelete(query as CFDictionary)
+        let status: OSStatus = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw ImpulseKeychainError(status: status)
+        }
+    }
+}
+
+
+/// Says once that the session is kept in the app's own keychain items. The message goes to a sink, so the single
+/// announcement can be checked.
+final class ImpulseKeychainFallbackNotice: @unchecked Sendable {
+    static let shared: ImpulseKeychainFallbackNotice = ImpulseKeychainFallbackNotice(sink: { (message: String) -> Void in
+        ImpulseKeychainFallbackNotice.logger.notice("\(message, privacy: .public)")
+    })
+
+    private static let logger: Logger = Logger(subsystem: "ImpulseTransport", category: "ImpulseKeychain")
+    private static let message: String = "The keychain refused the access group (errSecMissingEntitlement). The session is kept in the app's own keychain items without an access group, so the share extension cannot read it."
+
+    private let lock: NSLock = NSLock()
+    private let sink: @Sendable (String) -> Void
+    private var announced: Bool = false
+
+
+    init(sink: @escaping @Sendable (String) -> Void) {
+        self.sink = sink
+    }
+
+
+    func announceOnce() {
+        self.lock.lock()
+        let isFirst: Bool = !self.announced
+        self.announced = true
+        self.lock.unlock()
+        if isFirst {
+            self.sink(ImpulseKeychainFallbackNotice.message)
+        }
+    }
+}
+
+
+/// Runs keychain calls for one store. The calls use the access group. Only when the system answers
+/// errSecMissingEntitlement does the store move to the app's own items, announce it once, and stay there.
+final class ImpulseKeychainAccess: @unchecked Sendable {
+    private let keychain: any ImpulseKeychain
+    private let accessGroup: String
+    private let notice: ImpulseKeychainFallbackNotice
+    private let lock: NSLock = NSLock()
+    private var fellBack: Bool = false
+
+
+    init(
+        keychain: any ImpulseKeychain,
+        accessGroup: String,
+        notice: ImpulseKeychainFallbackNotice
+    ) {
+        self.keychain = keychain
+        self.accessGroup = accessGroup
+        self.notice = notice
+    }
+
+
+    /// Runs one keychain call. A call that fails for any other reason gives the fallback value.
+    func run<Output>(
+        fallback: Output,
+        _ operation: (any ImpulseKeychain, String?) throws -> Output
+    ) -> Output {
+        let group: String? = self.currentAccessGroup()
+        do {
+            return try operation(self.keychain, group)
+        } catch let error as ImpulseKeychainError where error.status == errSecMissingEntitlement && group != nil {
+            self.switchToOwnItems()
+            do {
+                return try operation(self.keychain, nil)
+            } catch {
+                return fallback
+            }
+        } catch {
+            return fallback
+        }
+    }
+
+
+    private func currentAccessGroup() -> String? {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.fellBack ? nil : self.accessGroup
+    }
+
+
+    private func switchToOwnItems() {
+        self.lock.lock()
+        self.fellBack = true
+        self.lock.unlock()
+        self.notice.announceOnce()
     }
 }
 
@@ -149,8 +263,7 @@ private struct ImpulseStoredSession: Codable, Equatable {
 
 /// Reads and writes the connection identity token as one keychain item per account, apart from the session blob.
 public struct ImpulseKeychainIdentityStore: ImpulseIdentityStore {
-    private let keychain: any ImpulseKeychain
-    private let accessGroup: String
+    private let access: ImpulseKeychainAccess
     private let accountSuffix: String
 
 
@@ -159,21 +272,37 @@ public struct ImpulseKeychainIdentityStore: ImpulseIdentityStore {
         accessGroup: String,
         accountSuffix: String
     ) {
-        self.keychain = keychain
-        self.accessGroup = accessGroup
+        self.access = ImpulseKeychainAccess(
+            keychain: keychain,
+            accessGroup: accessGroup,
+            notice: ImpulseKeychainFallbackNotice.shared
+        )
+        self.accountSuffix = accountSuffix
+    }
+
+
+    init(
+        access: ImpulseKeychainAccess,
+        accountSuffix: String
+    ) {
+        self.access = access
         self.accountSuffix = accountSuffix
     }
 
 
     public func string(forKey key: String) -> String? {
-        guard let data: Data = keychain.readData(
-            service: ImpulseSessionStore.serviceName,
-            account: key + accountSuffix,
-            accessGroup: accessGroup
-        ) else {
+        let account: String = key + self.accountSuffix
+        let data: Data? = self.access.run(fallback: nil) { (keychain: any ImpulseKeychain, group: String?) throws -> Data? in
+            return try keychain.readData(
+                service: ImpulseSessionStore.serviceName,
+                account: account,
+                accessGroup: group
+            )
+        }
+        guard let value: Data = data else {
             return nil
         }
-        guard let text: String = String(data: data, encoding: .utf8), !text.isEmpty else {
+        guard let text: String = String(data: value, encoding: .utf8), !text.isEmpty else {
             return nil
         }
         return text
@@ -187,21 +316,27 @@ public struct ImpulseKeychainIdentityStore: ImpulseIdentityStore {
         guard let data: Data = value.data(using: .utf8) else {
             return
         }
-        _ = keychain.writeData(
-            data,
-            service: ImpulseSessionStore.serviceName,
-            account: key + accountSuffix,
-            accessGroup: accessGroup
-        )
+        let account: String = key + self.accountSuffix
+        self.access.run(fallback: ()) { (keychain: any ImpulseKeychain, group: String?) throws -> Void in
+            try keychain.writeData(
+                data,
+                service: ImpulseSessionStore.serviceName,
+                account: account,
+                accessGroup: group
+            )
+        }
     }
 
 
     public func removeValue(forKey key: String) {
-        keychain.deleteData(
-            service: ImpulseSessionStore.serviceName,
-            account: key + accountSuffix,
-            accessGroup: accessGroup
-        )
+        let account: String = key + self.accountSuffix
+        self.access.run(fallback: ()) { (keychain: any ImpulseKeychain, group: String?) throws -> Void in
+            try keychain.deleteData(
+                service: ImpulseSessionStore.serviceName,
+                account: account,
+                accessGroup: group
+            )
+        }
     }
 }
 
@@ -218,8 +353,7 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
     }
 
 
-    private let keychain: any ImpulseKeychain
-    private let accessGroup: String
+    private let access: ImpulseKeychainAccess
     private let accountSuffix: String
     private let sessionAccount: String
 
@@ -230,9 +364,27 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
         accessGroup: String,
         keychain: any ImpulseKeychain = ImpulseSystemKeychain()
     ) {
+        self.init(
+            accountIndex: accountIndex,
+            accessGroup: accessGroup,
+            keychain: keychain,
+            notice: ImpulseKeychainFallbackNotice.shared
+        )
+    }
+
+
+    init(
+        accountIndex: Int,
+        accessGroup: String,
+        keychain: any ImpulseKeychain,
+        notice: ImpulseKeychainFallbackNotice
+    ) {
         let suffix: String = accountIndex == 0 ? "" : String(accountIndex)
-        self.keychain = keychain
-        self.accessGroup = accessGroup
+        self.access = ImpulseKeychainAccess(
+            keychain: keychain,
+            accessGroup: accessGroup,
+            notice: notice
+        )
         self.accountSuffix = suffix
         self.sessionAccount = "session" + suffix
     }
@@ -240,14 +392,18 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
 
     /// Returns nil when no session is stored, or when the stored blob is unreadable or incomplete.
     public func load() -> ImpulseSessionTokens? {
-        guard let data: Data = keychain.readData(
-            service: ImpulseSessionStore.serviceName,
-            account: sessionAccount,
-            accessGroup: accessGroup
-        ) else {
+        let account: String = self.sessionAccount
+        let data: Data? = self.access.run(fallback: nil) { (keychain: any ImpulseKeychain, group: String?) throws -> Data? in
+            return try keychain.readData(
+                service: ImpulseSessionStore.serviceName,
+                account: account,
+                accessGroup: group
+            )
+        }
+        guard let blob: Data = data else {
             return nil
         }
-        guard let stored: ImpulseStoredSession = try? JSONDecoder().decode(ImpulseStoredSession.self, from: data) else {
+        guard let stored: ImpulseStoredSession = try? JSONDecoder().decode(ImpulseStoredSession.self, from: blob) else {
             return nil
         }
         guard !stored.accessToken.isEmpty, stored.userId != 0 else {
@@ -271,22 +427,28 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
         guard let data: Data = try? JSONEncoder().encode(stored) else {
             return
         }
-        _ = keychain.writeData(
-            data,
-            service: ImpulseSessionStore.serviceName,
-            account: sessionAccount,
-            accessGroup: accessGroup
-        )
+        let account: String = self.sessionAccount
+        self.access.run(fallback: ()) { (keychain: any ImpulseKeychain, group: String?) throws -> Void in
+            try keychain.writeData(
+                data,
+                service: ImpulseSessionStore.serviceName,
+                account: account,
+                accessGroup: group
+            )
+        }
     }
 
 
     /// Removes the session tokens. The identity token is kept, as the identity is minted before a login.
     public func clear() {
-        keychain.deleteData(
-            service: ImpulseSessionStore.serviceName,
-            account: sessionAccount,
-            accessGroup: accessGroup
-        )
+        let account: String = self.sessionAccount
+        self.access.run(fallback: ()) { (keychain: any ImpulseKeychain, group: String?) throws -> Void in
+            try keychain.deleteData(
+                service: ImpulseSessionStore.serviceName,
+                account: account,
+                accessGroup: group
+            )
+        }
     }
 
 
@@ -300,9 +462,8 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
     /// The store of the identity token of this account.
     public func identityStore() -> ImpulseKeychainIdentityStore {
         return ImpulseKeychainIdentityStore(
-            keychain: keychain,
-            accessGroup: accessGroup,
-            accountSuffix: accountSuffix
+            access: self.access,
+            accountSuffix: self.accountSuffix
         )
     }
 }
