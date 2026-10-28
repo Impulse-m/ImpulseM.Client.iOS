@@ -25,7 +25,7 @@ public struct ImpulseRpcError: Equatable, Sendable {
 
 
 /// Why a call on a Centrifugo carrier did not succeed, as the SDK reported it.
-public struct ImpulseCarrierFailure: Equatable, Sendable {
+public struct ImpulseCarrierFailure: Error, Equatable, Sendable {
     /// The SDK reply code. 0 when the failure is not a server reply error (a lost connection, a timeout).
     public let sdkCode: Int
     /// The application code of the reply. 0 when unset.
