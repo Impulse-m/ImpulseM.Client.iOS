@@ -93,8 +93,8 @@ func updateNetworkEngineServerFlag(accountManager: AccountManager<TelegramAccoun
 /// The app's crash marker says a run died on a Rust engine thread or queue, including the bridge
 /// callbacks that run there (`rustEngineOwnsThread(named:)`, `rustEngineOwnsQueue(label:)`; the engine
 /// aborts on a panic). Two such crashes of a build within 24 h turn the engine off on this device for
-/// 24 h. Call it, and wait for it, before the accounts start, so this launch already resolves
-/// MtProtoKit. `appVersion` is `NetworkInitializationArguments.appVersion`; `crashedBundleVersion` is
+/// 24 h. Call it, and wait for it, before the accounts start. There is no fallback engine any more,
+/// so the verdict is only logged. `appVersion` is `NetworkInitializationArguments.appVersion`; `crashedBundleVersion` is
 /// the crashed run's `CFBundleVersion` (recorded with the marker): a crash of another build than this
 /// one is ignored. Returns whether the engine is now off locally for this build.
 public func recordRustEngineCrash(accountManager: AccountManager<TelegramAccountManagerTypes>, appVersion: String, crashedBundleVersion: String, timestamp: Int32) -> Signal<Bool, NoError> {
@@ -110,5 +110,57 @@ public func recordRustEngineCrash(accountManager: AccountManager<TelegramAccount
         let disabled = state.locallyDisabledRust(build: build, timestamp: timestamp)
         Logger.shared.log("Network", "Rust engine crash of \(crashedBuild) at \(timestamp)\(crashedBuild == build ? "" : " ignored, this is \(build)"): engine \(disabled ? "off" : "still on") locally")
         return disabled
+    }
+}
+
+func networkEngineRustDisabled(appConfiguration: AppConfiguration) -> Bool {
+    guard let data = appConfiguration.data, let value = data["mtproto_engine_rust_disabled"] else {
+        return false
+    }
+    switch value {
+    case let value as Bool:
+        return value
+    case let value as Double:
+        return value != 0.0
+    case let value as String:
+        return !["", "0", "false", "no"].contains(value.lowercased())
+    case is NSNull:
+        return false
+    default:
+        return true
+    }
+}
+
+/// What an account's app configuration says about the Rust engine; nil while it was never fetched.
+func networkEngineServerFlag(appConfiguration: AppConfiguration) -> Bool? {
+    if appConfiguration.data == nil {
+        return nil
+    }
+    return networkEngineRustDisabled(appConfiguration: appConfiguration)
+}
+
+/// Why the Rust engine may not run for this network, nil when it may: the account's own app
+/// configuration, or while it has none (a login, a fresh account) what other accounts got from the
+/// server; and the local crash-loop fallback.
+func networkEngineRustDisabledReason(appConfiguration: AppConfiguration, engineState: NetworkEngineState?, appVersion: String, timestamp: Int32) -> String? {
+    let build = networkEngineStateBuild(appVersion: appVersion)
+    if let rustDisabled = networkEngineServerFlag(appConfiguration: appConfiguration) {
+        if rustDisabled {
+            return "mtproto_engine_rust_disabled"
+        }
+    } else if let engineState = engineState, engineState.serverDisabledRust(build: build) {
+        return "mtproto_engine_rust_disabled for another account"
+    }
+    if let engineState = engineState, engineState.locallyDisabledRust(build: build, timestamp: timestamp) {
+        return "engine crash loop"
+    }
+    return nil
+}
+
+extension Network {
+    /// The server's engine kill switch. There is no other engine to move to, so the request is only logged;
+    /// the network keeps the engine it started with, and its callers go away with the kill switch.
+    public func disableRustEngine(reason: String) {
+        Logger.shared.log("Network", "Engine kill switch ignored, there is no fallback engine: \(reason)")
     }
 }
