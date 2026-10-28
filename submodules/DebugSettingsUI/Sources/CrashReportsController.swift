@@ -167,7 +167,7 @@ private final class CrashReportActions {
                     self.view(report)
                 })
             })),
-            .action(ContextMenuActionItem(text: "Send to Telegram Team", icon: { theme in
+            .action(ContextMenuActionItem(text: "Send to ImpulseM Team", icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Forward"), color: theme.contextMenu.primaryColor)
             }, action: { controller, _ in
                 controller?.dismiss(completion: {
@@ -219,7 +219,7 @@ private final class CrashReportActions {
     func confirmSend(_ report: CrashReport) {
         guard self.canPresent, !self.busy else { return }
         guard let context = self.context else {
-            self.alert("Sign In Required", "Sign in to a Telegram account to send this log.")
+            self.alert("Sign In Required", "Sign in to an ImpulseM account to send this log.")
             return
         }
         self.busy = true
@@ -300,7 +300,7 @@ private final class CrashReportActions {
                                 self.alert("Could Not Queue Log", "Please try again. The log remains saved on this device.")
                                 return
                             }
-                            self.show(UndoOverlayController(presentationData: self.sharedContext.currentPresentationData.with { $0 }, content: .succeed(text: "Thank you for helping make Telegram better!", timeout: nil, customUndoText: nil), action: { _ in
+                            self.show(UndoOverlayController(presentationData: self.sharedContext.currentPresentationData.with { $0 }, content: .succeed(text: "Thank you for helping make ImpulseM better!", timeout: nil, customUndoText: nil), action: { _ in
                                 return false
                             }))
                         }))

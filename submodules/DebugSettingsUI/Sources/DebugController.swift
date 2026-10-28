@@ -245,7 +245,7 @@ private enum DebugLogAction {
                 if destination == .email {
                     let composeController = MFMailComposeViewController()
                     composeController.mailComposeDelegate = arguments.mailComposeDelegate
-                    composeController.setSubject("Telegram Logs")
+                    composeController.setSubject("ImpulseM Logs")
                     for (name, path) in logs {
                         if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
                             composeController.addAttachmentData(data, mimeType: "application/text", fileName: name)
@@ -308,7 +308,7 @@ private enum DebugLogAction {
                     if destination == .email {
                         let composeController = MFMailComposeViewController()
                         composeController.mailComposeDelegate = arguments.mailComposeDelegate
-                        composeController.setSubject("Telegram Logs")
+                        composeController.setSubject("ImpulseM Logs")
                         for (name, path) in logs {
                             if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
                                 composeController.addAttachmentData(data, mimeType: "application/text", fileName: name)
@@ -374,7 +374,7 @@ private enum DebugLogAction {
                 if destination == .email {
                     let composeController = MFMailComposeViewController()
                     composeController.mailComposeDelegate = arguments.mailComposeDelegate
-                    composeController.setSubject("Telegram Logs")
+                    composeController.setSubject("ImpulseM Logs")
                     for (name, path) in logs {
                         if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
                             composeController.addAttachmentData(data, mimeType: "application/text", fileName: name)
@@ -440,7 +440,7 @@ private enum DebugLogAction {
                 if destination == .email {
                     let composeController = MFMailComposeViewController()
                     composeController.mailComposeDelegate = arguments.mailComposeDelegate
-                    composeController.setSubject("Telegram Logs")
+                    composeController.setSubject("ImpulseM Logs")
                     for (name, path) in logs {
                         if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
                             composeController.addAttachmentData(data, mimeType: "application/text", fileName: name)
@@ -507,7 +507,7 @@ private enum DebugLogAction {
                 if destination == .email {
                     let composeController = MFMailComposeViewController()
                     composeController.mailComposeDelegate = arguments.mailComposeDelegate
-                    composeController.setSubject("Telegram Logs")
+                    composeController.setSubject("ImpulseM Logs")
                     for (name, path) in logs {
                         if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
                             composeController.addAttachmentData(data, mimeType: "application/text", fileName: name)
@@ -543,7 +543,7 @@ private enum DebugLogAction {
                     if destination == .email {
                         let composeController = MFMailComposeViewController()
                         composeController.mailComposeDelegate = arguments.mailComposeDelegate
-                        composeController.setSubject("Telegram Logs")
+                        composeController.setSubject("ImpulseM Logs")
                         for (name, path) in logs {
                             if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
                                 composeController.addAttachmentData(data, mimeType: "application/text", fileName: name)
@@ -1743,7 +1743,7 @@ private enum DebugControllerEntry: ItemListNodeEntry {
             let bundleId = bundle.bundleIdentifier ?? ""
             let bundleVersion = bundle.infoDictionary?["CFBundleShortVersionString"] ?? ""
             let bundleBuild = bundle.infoDictionary?[kCFBundleVersionKey as String] ?? ""
-            return ItemListTextItem(presentationData: presentationData, text: .plain("Telegram for iOS \(bundleVersion) (\(bundleBuild))\n\(bundleId)"), sectionId: self.section, textAlignment: .center)
+            return ItemListTextItem(presentationData: presentationData, text: .plain("ImpulseM for iOS \(bundleVersion) (\(bundleBuild))\n\(bundleId)"), sectionId: self.section, textAlignment: .center)
         case .collectCpuProfile:
             return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: "Collect CPU Profile (10s)", kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: {
                 let presentationData = arguments.sharedContext.currentPresentationData.with { $0 }
@@ -1787,7 +1787,7 @@ private enum DebugControllerEntry: ItemListNodeEntry {
                     var items: [ActionSheetButtonItem] = []
 
                     if let context = arguments.context, context.sharedContext.applicationBindings.isMainApp {
-                        items.append(ActionSheetButtonItem(title: "Via Telegram", color: .accent, action: { [weak actionSheet] in
+                        items.append(ActionSheetButtonItem(title: "Via ImpulseM", color: .accent, action: { [weak actionSheet] in
                             actionSheet?.dismissAnimated()
 
                             let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyWriteable, .excludeDisabled]))
@@ -1844,7 +1844,7 @@ private enum DebugControllerEntry: ItemListNodeEntry {
 
                         let composeController = MFMailComposeViewController()
                         composeController.mailComposeDelegate = arguments.mailComposeDelegate
-                        composeController.setSubject("Telegram CPU Profiles")
+                        composeController.setSubject("ImpulseM CPU Profiles")
                         for (name, path) in logs {
                             if let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe) {
                                 composeController.addAttachmentData(data, mimeType: "application/text", fileName: name)
@@ -2114,7 +2114,7 @@ public func debugController(sharedContext: SharedAccountContext, context: Accoun
                     .separator
                 ]
                 if let context = arguments.context, context.sharedContext.applicationBindings.isMainApp {
-                    subItems.append(.action(ContextMenuActionItem(text: "Via Telegram", icon: { theme in
+                    subItems.append(.action(ContextMenuActionItem(text: "Via ImpulseM", icon: { theme in
                         return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Telegram"), color: theme.contextMenu.primaryColor)
                     }, action: { menu, _ in
                         menu?.dismiss(completion: {
