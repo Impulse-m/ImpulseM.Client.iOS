@@ -50,6 +50,8 @@ public struct ImpulseRequestOptions: Equatable, Sendable {
     /// for a login. Nil means no total deadline: the call retries until it gets a reply, the same as the Android client.
     /// Once the deadline passes, no further send or wait starts, and a send in flight is cut to the time left.
     public let totalDeadlineSeconds: TimeInterval?
+    /// A download gives up after 10 network failures instead of 6. Only the download methods have a limit.
+    public let forceDownload: Bool
 
 
     public init(
@@ -57,13 +59,15 @@ public struct ImpulseRequestOptions: Equatable, Sendable {
         failOnServerErrors: Bool = false,
         failOnServerErrorsExceptFloodWait: Bool = false,
         doNotWaitFloodWait: Bool = false,
-        totalDeadlineSeconds: TimeInterval? = nil
+        totalDeadlineSeconds: TimeInterval? = nil,
+        forceDownload: Bool = false
     ) {
         self.withoutLogin = withoutLogin
         self.failOnServerErrors = failOnServerErrors
         self.failOnServerErrorsExceptFloodWait = failOnServerErrorsExceptFloodWait
         self.doNotWaitFloodWait = doNotWaitFloodWait
         self.totalDeadlineSeconds = totalDeadlineSeconds
+        self.forceDownload = forceDownload
     }
 }
 
@@ -96,7 +100,16 @@ public enum ImpulseRequestPolicy {
     public static let defaultFloodWaitSeconds: TimeInterval = 2
     /// The largest wait of a server error retry.
     public static let maxServerBackoffSeconds: TimeInterval = 10
+    /// The media methods that download a file. Only these give up after a run of network failures.
+    public static let downloadMethods: Set<String> = [
+        "upload.getFile",
+        "upload.getWebFile",
+    ]
 
+    private static let downloadRetryMax: Int = 6
+    private static let forceDownloadRetryMax: Int = 10
+    private static let retryLimitCode: Int = -123
+    private static let retryLimitText: String = "RETRY_LIMIT"
     private static let floodWaitCode: Int = 420
     private static let authorizationCode: Int = 401
     private static let badRequestCode: Int = 400
@@ -178,6 +191,33 @@ public enum ImpulseRequestPolicy {
     /// so the wait grows by one second per failure up to the largest server backoff.
     public static func networkFailureSeconds(attempt: Int) -> TimeInterval {
         return min(TimeInterval(max(attempt, 1)), ImpulseRequestPolicy.maxServerBackoffSeconds)
+    }
+
+
+    /// The error a download ends with once its network failures reach the retry limit: 6 failures, or 10 with
+    /// `forceDownload`. Nil while the call goes on, and always nil for a method that is not a download. `attempt`
+    /// counts the network failures of the request from 1, this one included.
+    public static func downloadRetryLimit(
+        method: String,
+        options: ImpulseRequestOptions,
+        attempt: Int
+    ) -> ImpulseRpcError? {
+        guard ImpulseRequestPolicy.downloadMethods.contains(method) else {
+            return nil
+        }
+
+        let limit: Int = options.forceDownload
+            ? ImpulseRequestPolicy.forceDownloadRetryMax
+            : ImpulseRequestPolicy.downloadRetryMax
+        if attempt < limit {
+            return nil
+        }
+
+        return ImpulseRpcError(
+            code: ImpulseRequestPolicy.retryLimitCode,
+            text: ImpulseRequestPolicy.retryLimitText,
+            temporary: false
+        )
     }
 }
 
@@ -449,10 +489,12 @@ public final class ImpulseRequestService: Sendable {
                             return .failure(.rpc(ImpulseRpcError(code: 401, text: "SESSION_EXPIRED", temporary: false)))
 
                         case .faulted:
-                            if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
-                                seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt),
+                            if let ended: ImpulseRequestFailure = await self.waitAfterNetworkFailure(
+                                method: request.method,
+                                options: options,
+                                attempt: networkAttempt,
                                 deadline: deadline,
-                                endingWith: .network(lastFailure)
+                                failure: lastFailure
                             ) {
                                 return .failure(ended)
                             }
@@ -491,10 +533,12 @@ public final class ImpulseRequestService: Sendable {
                 }
                 guard let error: ImpulseRpcError = ImpulseCarrier.rpcError(from: failure, route: route) else {
                     lastFailure = failure
-                    if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
-                        seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt),
+                    if let ended: ImpulseRequestFailure = await self.waitAfterNetworkFailure(
+                        method: request.method,
+                        options: options,
+                        attempt: networkAttempt,
                         deadline: deadline,
-                        endingWith: .network(failure)
+                        failure: failure
                     ) {
                         return .failure(ended)
                     }
@@ -523,10 +567,12 @@ public final class ImpulseRequestService: Sendable {
                         refreshAttempted = true
 
                     case .faulted:
-                        if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
-                            seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt),
+                        if let ended: ImpulseRequestFailure = await self.waitAfterNetworkFailure(
+                            method: request.method,
+                            options: options,
+                            attempt: networkAttempt,
                             deadline: deadline,
-                            endingWith: .network(lastFailure)
+                            failure: lastFailure
                         ) {
                             return .failure(ended)
                         }
@@ -620,6 +666,32 @@ public final class ImpulseRequestService: Sendable {
         } catch {
             return .faulted
         }
+    }
+
+
+    /// Waits after a network failure. A download that reaches its retry limit ends with `-123 RETRY_LIMIT` before any
+    /// wait. Otherwise the wait is the one of `waitBeforeAttempt`, which ends the call with `failure` when the deadline
+    /// passes during it.
+    private func waitAfterNetworkFailure(
+        method: String,
+        options: ImpulseRequestOptions,
+        attempt: Int,
+        deadline: TimeInterval?,
+        failure: ImpulseCarrierFailure
+    ) async -> ImpulseRequestFailure? {
+        if let limit: ImpulseRpcError = ImpulseRequestPolicy.downloadRetryLimit(
+            method: method,
+            options: options,
+            attempt: attempt
+        ) {
+            return .rpc(limit)
+        }
+
+        return await self.waitBeforeAttempt(
+            seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: attempt),
+            deadline: deadline,
+            endingWith: .network(failure)
+        )
     }
 
 

@@ -347,7 +347,7 @@ private func makeService(
     return ImpulseRequestService(
         session: session,
         updateCarrier: update,
-        mediaCarrier: unused,
+        mediaCarrier: update,
         poolCarrier: unused,
         declarations: gate,
         signedIn: signedIn,
@@ -999,6 +999,135 @@ final class ImpulseRequestServiceTests: XCTestCase {
         XCTAssertEqual(session.refreshCount(), 1)
         XCTAssertEqual(carrier.sentMethods().count, 2)
         XCTAssertEqual(counter.value(), 0)
+    }
+
+
+    /// The sixth network failure of a download ends the call with `-123 RETRY_LIMIT`. The script fails more often than
+    /// that, so only the limit ends the call: six sends and five waits of 1 to 5 seconds, none after the sixth failure.
+    func testDownloadGivesRetryLimitAfterSixNetworkFailures() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: Array(repeating: networkFailure(), count: 10),
+            delays: [:]
+        )
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "upload.getFile"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.failureValue, .rpc(ImpulseRpcError(code: -123, text: "RETRY_LIMIT", temporary: false)))
+        XCTAssertEqual(carrier.sentMethods().count, 6)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2, 3, 4, 5])
+    }
+
+
+    /// A download that gets its reply on the sixth attempt is not cut short: five failures, then the reply.
+    func testDownloadReplyOnSixthAttemptIsDelivered() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        var replies: [Result<[UInt8], ImpulseCarrierFailure>] = Array(repeating: networkFailure(), count: 5)
+        replies.append(.success([9]))
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: replies, delays: [:])
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: RequestServiceClock()
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "upload.getWebFile"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.successValue, [9])
+        XCTAssertEqual(carrier.sentMethods().count, 6)
+    }
+
+
+    /// With `forceDownload` the limit is 10 network failures: ten sends and nine waits of 1 to 9 seconds.
+    func testForceDownloadGivesRetryLimitAfterTenNetworkFailures() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: Array(repeating: networkFailure(), count: 12),
+            delays: [:]
+        )
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "upload.getFile"),
+            options: ImpulseRequestOptions(forceDownload: true)
+        )
+
+        XCTAssertEqual(result.failureValue, .rpc(ImpulseRpcError(code: -123, text: "RETRY_LIMIT", temporary: false)))
+        XCTAssertEqual(carrier.sentMethods().count, 10)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    }
+
+
+    /// A request that is not a download keeps retrying network failures past the download limit, until its reply.
+    func testNonDownloadKeepsRetryingPastTheDownloadLimit() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        var replies: [Result<[UInt8], ImpulseCarrierFailure>] = Array(repeating: networkFailure(), count: 9)
+        replies.append(.success([6]))
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: replies, delays: [:])
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.successValue, [6])
+        XCTAssertEqual(carrier.sentMethods().count, 10)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    }
+
+
+    func testDownloadRetryLimitIsSixOrTenWithForceDownload() {
+        let limitError: ImpulseRpcError = ImpulseRpcError(code: -123, text: "RETRY_LIMIT", temporary: false)
+        let forced: ImpulseRequestOptions = ImpulseRequestOptions(forceDownload: true)
+
+        XCTAssertNil(ImpulseRequestPolicy.downloadRetryLimit(method: "upload.getFile", options: ImpulseRequestOptions(), attempt: 5))
+        XCTAssertEqual(
+            ImpulseRequestPolicy.downloadRetryLimit(method: "upload.getFile", options: ImpulseRequestOptions(), attempt: 6),
+            limitError
+        )
+        XCTAssertEqual(
+            ImpulseRequestPolicy.downloadRetryLimit(method: "upload.getWebFile", options: ImpulseRequestOptions(), attempt: 7),
+            limitError
+        )
+        XCTAssertNil(ImpulseRequestPolicy.downloadRetryLimit(method: "upload.getFile", options: forced, attempt: 9))
+        XCTAssertEqual(ImpulseRequestPolicy.downloadRetryLimit(method: "upload.getFile", options: forced, attempt: 10), limitError)
+        XCTAssertNil(ImpulseRequestPolicy.downloadRetryLimit(method: "messages.sendMessage", options: forced, attempt: 50))
+        XCTAssertNil(ImpulseRequestPolicy.downloadRetryLimit(method: "upload.saveFilePart", options: ImpulseRequestOptions(), attempt: 50))
     }
 }
 
