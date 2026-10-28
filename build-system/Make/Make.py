@@ -480,12 +480,16 @@ def resolve_configuration(base_path, bazel_command_line: BazelCommandLine, argum
         provisioning_profiles_path=provisioning_path,
         additional_codesigning_output_path=additional_codesigning_output_path
     )
-    if codesigning_data.aps_environment is None:
-        print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')
-        sys.exit(1)
+    aps_environment = codesigning_data.aps_environment
+    if aps_environment is None:
+        if getattr(arguments, 'disableProvisioningProfiles', False):
+            aps_environment = ''
+        else:
+            print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')
+            sys.exit(1)
 
     if bazel_command_line is not None:
-        build_configuration.write_to_variables_file(bazel_path=bazel_command_line.bazel, use_xcode_managed_codesigning=codesigning_data.use_xcode_managed_codesigning, aps_environment=codesigning_data.aps_environment, path=configuration_repository_path + '/variables.bzl')
+        build_configuration.write_to_variables_file(bazel_path=bazel_command_line.bazel, use_xcode_managed_codesigning=codesigning_data.use_xcode_managed_codesigning, aps_environment=aps_environment, path=configuration_repository_path + '/variables.bzl')
 
     provisioning_profile_files = []
     for file_name in os.listdir(provisioning_path):
@@ -631,6 +635,8 @@ def build(bazel, arguments):
     )
 
     bazel_command_line.set_configuration(arguments.configuration)
+    if arguments.disableProvisioningProfiles:
+        bazel_command_line.set_disable_provisioning_profiles()
     if arguments.embedWatchApp:
         if arguments.configuration in ('debug_arm64', 'release_arm64'):
             if arguments.watchApiId is None or arguments.watchApiHash is None:
@@ -1035,6 +1041,15 @@ if __name__ == '__main__':
         ],
         required=True,
         help='Build configuration'
+    )
+    buildParser.add_argument(
+        '--disableProvisioningProfiles',
+        action='store_true',
+        default=False,
+        help='''
+            This allows to build the project for simulator without having any codesigning identities installed.
+            Building for an actual device will fail.
+            '''
     )
     buildParser.add_argument(
         '--enableParallelSwiftmoduleGeneration',
