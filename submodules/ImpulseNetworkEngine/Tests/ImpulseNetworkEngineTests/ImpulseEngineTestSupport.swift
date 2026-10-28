@@ -48,6 +48,22 @@ func impulseFlushContextQueue() {
     let _ = done.wait(timeout: .now() + 5.0)
 }
 
+/// Logger shared by every engine test. Logger.shared asserts when no shared logger is set, so each test class installs this one in setUp.
+enum ImpulseEngineTestLogger {
+    static let logger: Logger = {
+        let path: String = NSTemporaryDirectory() + "impulse-network-engine-tests-\(getpid())"
+        try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        let logger: Logger = Logger(rootPath: path, basePath: path)
+        logger.logToFile = false
+        logger.logToConsole = false
+        return logger
+    }()
+
+    static func install() {
+        Logger.setSharedLogger(ImpulseEngineTestLogger.logger)
+    }
+}
+
 final class ImpulseFakeRequestService: NetworkEngineRequestService {
     func add(_ request: NetworkEngineRequest) -> Disposable {
         return ActionDisposable(action: {

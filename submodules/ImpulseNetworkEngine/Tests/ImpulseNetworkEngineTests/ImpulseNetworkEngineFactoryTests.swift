@@ -9,6 +9,12 @@ import ImpulseTransport
 final class ImpulseNetworkEngineFactoryTests: XCTestCase {
     private let testGroup: String = "test.group"
 
+    override func setUp() {
+        super.setUp()
+        ImpulseEngineTestLogger.install()
+    }
+
+
     func testFactoryNeverReturnsNilForTheMainApplication() {
         let factory: ImpulseNetworkEngineFactory = self.makeFactory()
         let engine: NetworkEngine? = factory.makeEngine(context: impulseMakeContext(), isAppExtension: false)

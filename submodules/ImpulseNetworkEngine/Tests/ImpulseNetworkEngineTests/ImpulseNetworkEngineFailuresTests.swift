@@ -6,6 +6,12 @@ import TelegramCore
 
 
 final class ImpulseNetworkEngineFailuresTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ImpulseEngineTestLogger.install()
+    }
+
+
     func testFloodWaitIsRetryableExceptSlowModeAndStoryLimits() {
         XCTAssertTrue(ImpulseNetworkEngineFailures.isFlood(ImpulseRpcError(code: 420, text: "FLOOD_WAIT_3", temporary: false)))
         XCTAssertTrue(ImpulseNetworkEngineFailures.isFlood(ImpulseRpcError(code: 420, text: "FLOOD_PREMIUM_WAIT_60", temporary: false)))

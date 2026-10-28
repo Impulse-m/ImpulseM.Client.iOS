@@ -2,6 +2,12 @@ import XCTest
 @testable import ImpulseNetworkEngine
 
 final class ImpulseNetworkIdentityTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ImpulseEngineTestLogger.install()
+    }
+
+
     private func wifi(address: [UInt8]) -> ImpulseNetworkInterface {
         return ImpulseNetworkInterface(name: "en0", address: address, netmask: [255, 255, 255, 0])
     }

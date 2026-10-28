@@ -15,6 +15,12 @@ final class ImpulseNetworkEngineSessionTests: XCTestCase {
     }
 
 
+    override func setUp() {
+        super.setUp()
+        ImpulseEngineTestLogger.install()
+    }
+
+
     private func makeSession(
         role: NetworkEngineSessionRole = .main,
         steps: [ImpulseScriptedStep],

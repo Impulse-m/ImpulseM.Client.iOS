@@ -118,6 +118,12 @@ private func makeBridge(applied: BridgeOptionRecorder) -> ImpulseUpdateBridge {
 
 
 final class ImpulseUpdateBridgeTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ImpulseEngineTestLogger.install()
+    }
+
+
     func testResetIsHandedToEverySink() {
         let bridge: ImpulseUpdateBridge = ImpulseUpdateBridge(
             parse: { (data: Data) -> Any? in

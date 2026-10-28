@@ -5,6 +5,12 @@ import TelegramCore
 @testable import ImpulseNetworkEngine
 
 final class ImpulseEngineBehaviourTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ImpulseEngineTestLogger.install()
+    }
+
+
     func testKindIsImpulse() {
         let engine: ImpulseNetworkEngine = ImpulseNetworkEngine(context: impulseMakeContext(), sessionBuilder: { datacenterId, _, _, _ in
             return ImpulseFakeNetworkSession(datacenterId: datacenterId)
