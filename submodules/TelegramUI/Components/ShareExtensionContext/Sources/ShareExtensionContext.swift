@@ -2,6 +2,7 @@ import UIKit
 import AsyncDisplayKit
 import Display
 import TelegramCore
+import ImpulseNetworkEngine
 import PasscodeCore
 import SwiftSignalKit
 import TelegramPresentationData
@@ -393,7 +394,8 @@ public class ShareRootControllerImpl {
                 encryptionProvider: OpenSSLEncryptionProvider(),
                 deviceModelName: nil,
                 useBetaFeatures: initializationData.useBetaFeatures,
-                isICloudEnabled: false
+                isICloudEnabled: false,
+                networkEngineFactory: ImpulseNetworkEngineFactory()
             )
             
             let accountData: Signal<(ShareControllerEnvironment, ShareControllerAccountContext, [ShareControllerSwitchableAccount]), NoError> = initializationData.makeTempContext(
