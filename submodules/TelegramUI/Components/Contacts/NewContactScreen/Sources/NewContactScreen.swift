@@ -1101,7 +1101,7 @@ public class NewContactScreen: ViewControllerComponentContainer {
                 let appProfile = DeviceContactUrlData(appProfile: peer.id)
                 var found = false
                 for url in urls {
-                    if url.label == appProfile.label && url.value == appProfile.value {
+                    if (url.label == appProfile.label || url.label == "Telegram") && url.value == appProfile.value {
                         found = true
                         break
                     }

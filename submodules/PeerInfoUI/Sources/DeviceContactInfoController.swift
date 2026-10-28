@@ -1119,7 +1119,7 @@ public func deviceContactInfoController(context: ShareControllerAccountContext, 
                     let appProfile = DeviceContactUrlData(appProfile: createForPeer.id)
                     var found = false
                     for url in urls {
-                        if url.label == appProfile.label && url.value == appProfile.value {
+                        if (url.label == appProfile.label || url.label == "Telegram") && url.value == appProfile.value {
                             found = true
                             break
                         }
