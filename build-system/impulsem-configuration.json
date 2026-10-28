@@ -1,0 +1,14 @@
+{
+	"bundle_id": "net.impulsem.messenger",
+	"api_id": "2",
+	"api_hash": "310fb2c92b5150d236bda748ecfb9d45",
+	"team_id": "TEAM_ID_PLACEHOLDER",
+	"app_center_id": "0",
+	"is_internal_build": "false",
+	"is_appstore_build": "false",
+	"appstore_id": "0",
+	"app_specific_url_scheme": "tg",
+	"premium_iap_product_id": "",
+	"enable_siri": false,
+	"enable_icloud": false
+}
