@@ -1,0 +1,153 @@
+name: iOS simulator build
+
+on:
+  push:
+    branches:
+      - 'ci/**'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+
+jobs:
+  build:
+    name: Build simulator app
+    runs-on: macos-26
+    timeout-minutes: 240
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Report disk space before cleanup
+        run: df -h /
+
+      - name: Free disk space
+        run: |
+          set -eu
+          ACTIVE_XCODE="$(readlink -f /Applications/Xcode.app)"
+          for XCODE_APP in /Applications/Xcode_*.app; do
+            if [ -d "$XCODE_APP" ] && [ "$(readlink -f "$XCODE_APP")" != "$ACTIVE_XCODE" ]; then
+              sudo rm -rf "$XCODE_APP"
+            fi
+          done
+          xcrun simctl delete all || true
+          rm -rf "$HOME/Library/Developer/CoreSimulator/Caches" || true
+          df -h /
+
+      - name: Select default Xcode
+        run: |
+          set -eu
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcodebuild -version
+          INSTALLED_XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode /{print $2}')"
+          test -n "$INSTALLED_XCODE_VERSION"
+          echo "Installed Xcode version: $INSTALLED_XCODE_VERSION"
+
+      - name: Check out submodules except the Rust engine
+        run: |
+          set -eu
+          # The app no longer builds the Rust engine, so its submodule is not needed.
+          git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
+            | awk '{print $2}' \
+            | grep -v '^third-party/mtproto-engine$' \
+            > "$RUNNER_TEMP/submodule-paths.txt"
+          while IFS= read -r SUBMODULE_PATH; do
+            git submodule update --init --recursive -- "$SUBMODULE_PATH"
+          done < "$RUNNER_TEMP/submodule-paths.txt"
+
+      - name: Generate iOS icons
+        run: |
+          set -o pipefail
+          bash build-system/icons/generate_ios_icons.sh
+
+      - name: Collect generated iOS icons
+        run: |
+          set -eu
+          mkdir -p build-artifacts
+          awk -F'|' 'NF >= 3 {print $2}' build-system/icons/ios_icon_manifest.txt > "$RUNNER_TEMP/icon-outputs.txt"
+          tar -czf build-artifacts/ios-icons.tar.gz -T "$RUNNER_TEMP/icon-outputs.txt"
+
+      - name: Upload generated iOS icons
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-icons
+          path: build-artifacts/ios-icons.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Restore Bazel disk cache
+        id: bazel-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/bazel-disk-cache
+          key: ios-bazel-disk-${{ hashFiles('versions.json') }}-debug_sim_arm64-${{ github.run_id }}
+          restore-keys: |
+            ios-bazel-disk-${{ hashFiles('versions.json') }}-debug_sim_arm64-
+
+      - name: Generate Xcode project
+        run: |
+          set -o pipefail
+          mkdir -p build-logs
+          python3 build-system/Make/Make.py \
+            --overrideXcodeVersion \
+            --cacheDir="$HOME/bazel-disk-cache" \
+            generateProject \
+            --configurationPath=build-system/impulsem-configuration.json \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --disableProvisioningProfiles 2>&1 | tee build-logs/make-generate-project.log
+
+      - name: Build simulator app
+        run: |
+          set -o pipefail
+          mkdir -p build-logs
+          python3 build-system/Make/Make.py \
+            --overrideXcodeVersion \
+            --cacheDir="$HOME/bazel-disk-cache" \
+            build \
+            --configurationPath=build-system/impulsem-configuration.json \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --disableProvisioningProfiles \
+            --configuration=debug_sim_arm64 \
+            --buildNumber=10000 2>&1 | tee build-logs/make-build.log
+
+      - name: Report Bazel disk cache size
+        if: always()
+        run: du -sh "$HOME/bazel-disk-cache" || true
+
+      - name: Save Bazel disk cache
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/bazel-disk-cache
+          key: ios-bazel-disk-${{ hashFiles('versions.json') }}-debug_sim_arm64-${{ github.run_id }}
+
+      - name: Test ImpulseTransport package
+        run: |
+          set -o pipefail
+          mkdir -p build-logs
+          swift test --package-path submodules/ImpulseTransport 2>&1 | tee build-logs/swift-test-impulse-transport.log
+
+      - name: Test ImpulseNetworkEngine package
+        run: |
+          set -o pipefail
+          mkdir -p build-logs
+          swift test --package-path submodules/ImpulseNetworkEngine 2>&1 | tee build-logs/swift-test-impulse-network-engine.log
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-build-logs
+          path: build-logs/
+          if-no-files-found: warn
+          retention-days: 7
