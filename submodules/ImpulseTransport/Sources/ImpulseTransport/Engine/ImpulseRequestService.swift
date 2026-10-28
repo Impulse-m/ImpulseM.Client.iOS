@@ -135,7 +135,9 @@ public enum ImpulseRequestPolicy {
             || error.code == ImpulseRequestPolicy.serviceUnavailableCode
             || error.code < 0
         if retriesServerErrors && isServerFailure {
-            if text.contains(ImpulseRequestPolicy.msgWaitFailedText) || text.contains(ImpulseRequestPolicy.workerBusyText) {
+            let isWorkerBusy: Bool = error.code == ImpulseRequestPolicy.serverErrorCode
+                && text.contains(ImpulseRequestPolicy.workerBusyText)
+            if text.contains(ImpulseRequestPolicy.msgWaitFailedText) || isWorkerBusy {
                 return .retryAfter(seconds: 0)
             }
             let backoff: TimeInterval = min(TimeInterval(max(failureCount, 0)), ImpulseRequestPolicy.maxServerBackoffSeconds)
@@ -163,6 +165,13 @@ public enum ImpulseRequestPolicy {
         }
 
         return .deliver
+    }
+
+
+    /// The wait before the send that follows a network failure. `attempt` counts the failures of the request from 1,
+    /// so the wait grows by one second per failure up to the largest server backoff.
+    public static func networkFailureSeconds(attempt: Int) -> TimeInterval {
+        return min(TimeInterval(max(attempt, 1)), ImpulseRequestPolicy.maxServerBackoffSeconds)
     }
 }
 
@@ -278,8 +287,8 @@ internal final class ImpulseLoginGate: @unchecked Sendable {
 
 
 /// Sends the requests of a connection. It chooses the carrier of each method, waits for a login when the request
-/// needs one, declares the connection, retries flood waits and server errors, refreshes a refused token once, and
-/// reports a 401 as an authorization failure. Requests submitted with a predecessor run after it has settled.
+/// needs one, declares the connection, retries flood waits, server errors and network failures, refreshes a refused
+/// token once, and reports a 401 as an authorization failure. Requests submitted with a predecessor run after it has settled.
 public final class ImpulseRequestService: Sendable {
     private let session: any ImpulseRequestSession
     private let updateCarrier: any ImpulseRequestCarrier
@@ -289,6 +298,15 @@ public final class ImpulseRequestService: Sendable {
     private let loginGate: ImpulseLoginGate
     private let onAuthorizationRequired: @Sendable () -> Void
     private static let notInitializedText: String = "CONNECTION_NOT_INITED"
+
+
+    /// What a token refresh ended with: a fresh session, a refresh that did not renew the session, or a refresh that
+    /// failed on the network.
+    private enum RefreshStep {
+        case refreshed
+        case notRefreshed
+        case faulted
+    }
 
 
     /// Creates the service. `signedIn` is the login state at creation; `onAuthorizationRequired` runs when a request
@@ -356,26 +374,50 @@ public final class ImpulseRequestService: Sendable {
             return .failure(.canceled)
         }
 
-        if signedIn {
-            let needsRefresh: Bool = await self.session.needsProactiveRefresh()
-            if needsRefresh {
-                let refreshed: Bool = await self.refreshSucceeded()
-                if !refreshed {
-                    return .failure(.rpc(ImpulseRpcError(code: 401, text: "SESSION_EXPIRED", temporary: false)))
-                }
-            }
-        }
-
-        if let gate: any ImpulseDeclarationGate = self.declarations {
-            _ = await gate.awaitDeclared(timeoutSeconds: ImpulseRequestTimeouts.declarationWaitSeconds)
-        }
-
+        var refreshDue: Bool = true
+        var declarationAwaited: Bool = false
         var refreshAttempted: Bool = false
         var redeclared: Bool = false
         var failureCount: Int = 0
+        var networkAttempt: Int = 1
         while true {
             if Task.isCancelled {
                 return .failure(.canceled)
+            }
+
+            if refreshDue {
+                refreshDue = false
+                if signedIn {
+                    let needsRefresh: Bool = await self.session.needsProactiveRefresh()
+                    if needsRefresh {
+                        let step: RefreshStep = await self.refreshStep()
+                        switch step {
+                        case .refreshed:
+                            break
+
+                        case .notRefreshed:
+                            return .failure(.rpc(ImpulseRpcError(code: 401, text: "SESSION_EXPIRED", temporary: false)))
+
+                        case .faulted:
+                            let resumed: Bool = await self.pause(
+                                seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt)
+                            )
+                            networkAttempt += 1
+                            if !resumed {
+                                return .failure(.canceled)
+                            }
+                            refreshDue = true
+                            continue
+                        }
+                    }
+                }
+            }
+
+            if !declarationAwaited {
+                declarationAwaited = true
+                if let gate: any ImpulseDeclarationGate = self.declarations {
+                    _ = await gate.awaitDeclared(timeoutSeconds: ImpulseRequestTimeouts.declarationWaitSeconds)
+                }
             }
 
             let settled: Result<[UInt8], ImpulseCarrierFailure> = await self.sendOnce(
@@ -391,7 +433,15 @@ public final class ImpulseRequestService: Sendable {
                     return .failure(.canceled)
                 }
                 guard let error: ImpulseRpcError = ImpulseCarrier.rpcError(from: failure, route: route) else {
-                    return .failure(.network(failure))
+                    let resumed: Bool = await self.pause(
+                        seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt)
+                    )
+                    networkAttempt += 1
+                    if !resumed {
+                        return .failure(.canceled)
+                    }
+                    refreshDue = true
+                    continue
                 }
 
                 if error.text == ImpulseRequestService.notInitializedText, !redeclared, let gate: any ImpulseDeclarationGate = self.declarations {
@@ -404,9 +454,24 @@ public final class ImpulseRequestService: Sendable {
                 let refusedToken: Bool = ImpulseErrors.isTokenRefusal(failure)
                     || ImpulseErrors.classify(error) == .refreshAndRetry
                 if refusedToken && signedIn && !refreshAttempted {
-                    refreshAttempted = true
-                    let refreshed: Bool = await self.refreshSucceeded()
-                    if refreshed {
+                    let step: RefreshStep = await self.refreshStep()
+                    switch step {
+                    case .refreshed:
+                        refreshAttempted = true
+                        continue
+
+                    case .notRefreshed:
+                        refreshAttempted = true
+
+                    case .faulted:
+                        let resumed: Bool = await self.pause(
+                            seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt)
+                        )
+                        networkAttempt += 1
+                        if !resumed {
+                            return .failure(.canceled)
+                        }
+                        refreshDue = true
                         continue
                     }
                 }
@@ -465,12 +530,18 @@ public final class ImpulseRequestService: Sendable {
     }
 
 
-    private func refreshSucceeded() async -> Bool {
-        guard let outcome: ImpulseRefreshOutcome = try? await self.session.refresh() else {
-            return false
+    /// Refreshes the session. A throw is a failure of the refresh on the network: the session is kept and the
+    /// refresh is not a session end.
+    private func refreshStep() async -> RefreshStep {
+        do {
+            let outcome: ImpulseRefreshOutcome = try await self.session.refresh()
+            if outcome == .refreshed {
+                return .refreshed
+            }
+            return .notRefreshed
+        } catch {
+            return .faulted
         }
-
-        return outcome == .refreshed
     }
 
 

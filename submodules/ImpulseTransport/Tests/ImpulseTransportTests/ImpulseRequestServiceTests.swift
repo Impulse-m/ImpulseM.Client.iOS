@@ -80,6 +80,64 @@ private final class RequestServiceSession: ImpulseRequestSession, @unchecked Sen
 }
 
 
+private final class RequestServiceFlakySession: ImpulseRequestSession, @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private let proactive: Bool
+    private var failingRefreshes: Int
+    private var refreshes: Int = 0
+
+
+    init(
+        proactive: Bool,
+        failingRefreshes: Int
+    ) {
+        self.proactive = proactive
+        self.failingRefreshes = failingRefreshes
+    }
+
+
+    func refreshCount() -> Int {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.refreshes
+    }
+
+
+    func hasSession() async -> Bool {
+        return true
+    }
+
+
+    func needsProactiveRefresh() async -> Bool {
+        return self.proactive
+    }
+
+
+    func refresh() async throws -> ImpulseRefreshOutcome {
+        if self.recordRefresh() {
+            throw ImpulseTokenError.carrierFailure(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:]))
+        }
+        return .refreshed
+    }
+
+
+    private func recordRefresh() -> Bool {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        self.refreshes += 1
+        if self.failingRefreshes > 0 {
+            self.failingRefreshes -= 1
+            return true
+        }
+        return false
+    }
+}
+
+
 private final class RequestServiceCarrier: ImpulseRequestCarrier, @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private var replies: [Result<[UInt8], ImpulseCarrierFailure>]
@@ -219,6 +277,11 @@ private func apiFailure(
 }
 
 
+private func networkFailure() -> Result<[UInt8], ImpulseCarrierFailure> {
+    return .failure(ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:]))
+}
+
+
 private func makeService(
     session: RequestServiceSession,
     update: RequestServiceCarrier,
@@ -341,6 +404,34 @@ final class ImpulseRequestServiceTests: XCTestCase {
             ImpulseRequestPolicy.decide(error: error, options: ImpulseRequestOptions(), failureCount: 1),
             .retryAfter(seconds: 0)
         )
+    }
+
+
+    func testWorkerBusyOnServerErrorRetriesAtOnce() {
+        let error: ImpulseRpcError = ImpulseRpcError(code: 500, text: "WORKER_BUSY_TOO_LONG_RETRY", temporary: false)
+
+        XCTAssertEqual(
+            ImpulseRequestPolicy.decide(error: error, options: ImpulseRequestOptions(), failureCount: 3),
+            .retryAfter(seconds: 0)
+        )
+    }
+
+
+    func testWorkerBusyOnServiceUnavailableIsBackedOff() {
+        let error: ImpulseRpcError = ImpulseRpcError(code: 503, text: "WORKER_BUSY_TOO_LONG_RETRY", temporary: false)
+
+        XCTAssertEqual(
+            ImpulseRequestPolicy.decide(error: error, options: ImpulseRequestOptions(), failureCount: 3),
+            .retryAfter(seconds: 3)
+        )
+    }
+
+
+    func testNetworkFailureWaitGrowsPerAttemptAndIsCapped() {
+        XCTAssertEqual(ImpulseRequestPolicy.networkFailureSeconds(attempt: 1), 1)
+        XCTAssertEqual(ImpulseRequestPolicy.networkFailureSeconds(attempt: 0), 1)
+        XCTAssertEqual(ImpulseRequestPolicy.networkFailureSeconds(attempt: 4), 4)
+        XCTAssertEqual(ImpulseRequestPolicy.networkFailureSeconds(attempt: 50), 10)
     }
 
 
@@ -616,6 +707,90 @@ final class ImpulseRequestServiceTests: XCTestCase {
         _ = await second.result.value
 
         XCTAssertEqual(carrier.completedMethods(), ["messages.first", "messages.second"])
+    }
+
+
+    func testNetworkFailureIsRetriedUntilAReplyArrives() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: [networkFailure(), .success([6])],
+            delays: [:]
+        )
+        let counter: RequestServiceCounter = RequestServiceCounter()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: counter
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.successValue, [6])
+        XCTAssertEqual(carrier.sentMethods().count, 2)
+        XCTAssertEqual(counter.value(), 0)
+    }
+
+
+    func testThrownProactiveRefreshIsRetriedWithoutSessionExpired() async {
+        let session: RequestServiceFlakySession = RequestServiceFlakySession(proactive: true, failingRefreshes: 1)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: [.success([8])], delays: [:])
+        let counter: RequestServiceCounter = RequestServiceCounter()
+        let service: ImpulseRequestService = ImpulseRequestService(
+            session: session,
+            updateCarrier: carrier,
+            mediaCarrier: carrier,
+            poolCarrier: carrier,
+            declarations: nil,
+            signedIn: true,
+            onAuthorizationRequired: {
+                counter.increment()
+            }
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.successValue, [8])
+        XCTAssertEqual(session.refreshCount(), 2)
+        XCTAssertEqual(counter.value(), 0)
+    }
+
+
+    func testThrownReactiveRefreshIsRetriedWithoutAuthorizationRequired() async {
+        let session: RequestServiceFlakySession = RequestServiceFlakySession(proactive: false, failingRefreshes: 1)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(
+            replies: [apiFailure(code: 401, text: "AUTH_KEY_UNREGISTERED"), .success([5])],
+            delays: [:]
+        )
+        let counter: RequestServiceCounter = RequestServiceCounter()
+        let service: ImpulseRequestService = ImpulseRequestService(
+            session: session,
+            updateCarrier: carrier,
+            mediaCarrier: carrier,
+            poolCarrier: carrier,
+            declarations: nil,
+            signedIn: true,
+            onAuthorizationRequired: {
+                counter.increment()
+            }
+        )
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.successValue, [5])
+        XCTAssertEqual(session.refreshCount(), 1)
+        XCTAssertEqual(carrier.sentMethods().count, 2)
+        XCTAssertEqual(counter.value(), 0)
     }
 }
 
