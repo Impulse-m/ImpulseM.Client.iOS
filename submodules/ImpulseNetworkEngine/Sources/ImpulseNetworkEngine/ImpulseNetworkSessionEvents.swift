@@ -18,7 +18,7 @@ final class ImpulseNetworkSessionEvents: ImpulseNetworkSessionDelegate, ImpulseU
     }
 
 
-    func networkSessionDidReceive(tl: [UInt8]) {
-        self.owner?.handleUpdate(tl: tl)
+    func networkSessionDidReceive(tl: [UInt8], channel: String) {
+        self.owner?.handleUpdate(tl: tl, channel: channel)
     }
 }

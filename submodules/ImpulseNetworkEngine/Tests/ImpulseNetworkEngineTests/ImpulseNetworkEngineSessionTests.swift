@@ -433,12 +433,15 @@ final class ImpulseNetworkEngineSessionTests: XCTestCase {
                 bridgeLog.append("parsed")
                 return "update"
             },
+            knownDatacenterIds: { () -> Set<Int32> in
+                return []
+            },
             applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
             }
         )
         let main: ImpulseNetworkEngineSession = self.makeSession(steps: [], updateBridge: bridge)
         main.addUpdateSink(ImpulseRecordingUpdateSink(log: log))
-        main.transport.deliverUpdate(tl: [1, 2, 3])
+        main.transport.deliverUpdate(tl: [1, 2, 3], channel: "user:5")
         main.transport.deliverReset()
         XCTAssertEqual(log.contents(), ["message:update", "reset"])
 
@@ -447,12 +450,15 @@ final class ImpulseNetworkEngineSessionTests: XCTestCase {
             parse: { (data: Data) -> Any? in
                 return "update"
             },
+            knownDatacenterIds: { () -> Set<Int32> in
+                return []
+            },
             applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
             }
         )
         let worker: ImpulseNetworkEngineSession = self.makeSession(role: .worker(masterDatacenterId: 2, isMedia: false, isCdn: false), steps: [], updateBridge: workerBridge)
         worker.addUpdateSink(ImpulseRecordingUpdateSink(log: workerLog))
-        worker.transport.deliverUpdate(tl: [1, 2, 3])
+        worker.transport.deliverUpdate(tl: [1, 2, 3], channel: "user:5")
         worker.transport.deliverReset()
         XCTAssertEqual(workerLog.contents(), [])
     }

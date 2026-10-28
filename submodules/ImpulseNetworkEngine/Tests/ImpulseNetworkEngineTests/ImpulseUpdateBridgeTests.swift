@@ -47,6 +47,10 @@ private final class BridgeCounter {
 private let bridgeVectorId: UInt32 = 0x1cb5c415
 private let bridgeMediaOnlyFlag: Int32 = 1 << 1
 private let bridgeCdnFlag: Int32 = 1 << 3
+private let bridgeSystemLane: String = "system:config"
+private let bridgeUserLane: String = "user:5"
+private let bridgeChannelLane: String = "channel:9"
+private let bridgeKnownDatacenterIds: Set<Int32> = [1, 2, 3, 4, 5]
 
 
 private func littleEndian(_ value: UInt32) -> [UInt8] {
@@ -97,11 +101,30 @@ private func updateShortWithDcOption(
 }
 
 
+/// A bridge that parses every message to "message" and records the DC options it applies.
+private func makeBridge(applied: BridgeOptionRecorder) -> ImpulseUpdateBridge {
+    return ImpulseUpdateBridge(
+        parse: { (data: Data) -> Any? in
+            return "message"
+        },
+        knownDatacenterIds: { () -> Set<Int32> in
+            return bridgeKnownDatacenterIds
+        },
+        applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
+            applied.record(options)
+        }
+    )
+}
+
+
 final class ImpulseUpdateBridgeTests: XCTestCase {
     func testResetIsHandedToEverySink() {
         let bridge: ImpulseUpdateBridge = ImpulseUpdateBridge(
             parse: { (data: Data) -> Any? in
                 return nil
+            },
+            knownDatacenterIds: { () -> Set<Int32> in
+                return bridgeKnownDatacenterIds
             },
             applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
             }
@@ -123,6 +146,9 @@ final class ImpulseUpdateBridgeTests: XCTestCase {
             parse: { (data: Data) -> Any? in
                 return "message-\(data.count)"
             },
+            knownDatacenterIds: { () -> Set<Int32> in
+                return bridgeKnownDatacenterIds
+            },
             applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
                 XCTFail("A publication that is not updateDcOptions must not apply DC options")
             }
@@ -130,8 +156,8 @@ final class ImpulseUpdateBridgeTests: XCTestCase {
         let sink: BridgeSinkRecorder = BridgeSinkRecorder()
         bridge.addSink(sink)
 
-        bridge.networkSessionDidReceive(tl: [1, 2, 3])
-        bridge.networkSessionDidReceive(tl: [1, 2, 3, 4, 5])
+        bridge.networkSessionDidReceive(tl: [1, 2, 3], channel: bridgeUserLane)
+        bridge.networkSessionDidReceive(tl: [1, 2, 3, 4, 5], channel: bridgeUserLane)
 
         XCTAssertEqual(sink.messages, ["message-3", "message-5"])
     }
@@ -142,25 +168,31 @@ final class ImpulseUpdateBridgeTests: XCTestCase {
             parse: { (data: Data) -> Any? in
                 return nil
             },
+            knownDatacenterIds: { () -> Set<Int32> in
+                return bridgeKnownDatacenterIds
+            },
             applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
             }
         )
         let sink: BridgeSinkRecorder = BridgeSinkRecorder()
         bridge.addSink(sink)
 
-        bridge.networkSessionDidReceive(tl: [1, 2, 3, 4])
+        bridge.networkSessionDidReceive(tl: [1, 2, 3, 4], channel: bridgeUserLane)
 
         XCTAssertTrue(sink.messages.isEmpty)
     }
 
 
-    func testUpdateDcOptionsIsAppliedAndNotHandedOver() {
+    func testUpdateDcOptionsOnSystemLaneIsAppliedAndNotHandedOver() {
         let applied: BridgeOptionRecorder = BridgeOptionRecorder()
         let parsed: BridgeCounter = BridgeCounter()
         let bridge: ImpulseUpdateBridge = ImpulseUpdateBridge(
             parse: { (data: Data) -> Any? in
                 parsed.increment()
                 return "message"
+            },
+            knownDatacenterIds: { () -> Set<Int32> in
+                return bridgeKnownDatacenterIds
             },
             applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
                 applied.record(options)
@@ -174,18 +206,141 @@ final class ImpulseUpdateBridgeTests: XCTestCase {
             ipAddress: "10.1.2.3",
             port: 443,
             flags: bridgeMediaOnlyFlag
-        ))
+        ), channel: bridgeSystemLane)
 
         XCTAssertEqual(applied.batches.count, 1)
         XCTAssertEqual(applied.batches.first?.first?.id, 2)
         XCTAssertEqual(applied.batches.first?.first?.ipAddress, "10.1.2.3")
+        XCTAssertEqual(applied.batches.first?.first?.mediaOnly, true)
         XCTAssertEqual(parsed.count, 0)
         XCTAssertTrue(sink.messages.isEmpty)
     }
 
 
-    func testUpdateDcOptionsSetsTheAddressSetOfTheContext() {
+    func testUpdateDcOptionsOnUserLaneIsForwardedAndNotApplied() {
+        let applied: BridgeOptionRecorder = BridgeOptionRecorder()
+        let bridge: ImpulseUpdateBridge = makeBridge(applied: applied)
+        let sink: BridgeSinkRecorder = BridgeSinkRecorder()
+        bridge.addSink(sink)
+
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 2,
+            ipAddress: "10.1.2.3",
+            port: 443,
+            flags: 0
+        ), channel: bridgeUserLane)
+
+        XCTAssertTrue(applied.batches.isEmpty)
+        XCTAssertEqual(sink.messages, ["message"])
+    }
+
+
+    func testUpdateDcOptionsOnChannelLaneIsForwardedAndNotApplied() {
+        let applied: BridgeOptionRecorder = BridgeOptionRecorder()
+        let bridge: ImpulseUpdateBridge = makeBridge(applied: applied)
+        let sink: BridgeSinkRecorder = BridgeSinkRecorder()
+        bridge.addSink(sink)
+
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 2,
+            ipAddress: "10.1.2.3",
+            port: 443,
+            flags: 0
+        ), channel: bridgeChannelLane)
+
+        XCTAssertTrue(applied.batches.isEmpty)
+        XCTAssertEqual(sink.messages, ["message"])
+    }
+
+
+    func testOptionWithInvalidAddressIsDropped() {
+        let applied: BridgeOptionRecorder = BridgeOptionRecorder()
+        let bridge: ImpulseUpdateBridge = makeBridge(applied: applied)
+
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 2,
+            ipAddress: "not-an-address",
+            port: 443,
+            flags: 0
+        ), channel: bridgeSystemLane)
+
+        XCTAssertTrue(applied.batches.isEmpty)
+    }
+
+
+    func testOptionWithPortZeroIsDropped() {
+        let applied: BridgeOptionRecorder = BridgeOptionRecorder()
+        let bridge: ImpulseUpdateBridge = makeBridge(applied: applied)
+
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 2,
+            ipAddress: "10.1.2.3",
+            port: 0,
+            flags: 0
+        ), channel: bridgeSystemLane)
+
+        XCTAssertTrue(applied.batches.isEmpty)
+    }
+
+
+    func testOptionWithPortAboveRangeIsDropped() {
+        let applied: BridgeOptionRecorder = BridgeOptionRecorder()
+        let bridge: ImpulseUpdateBridge = makeBridge(applied: applied)
+
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 2,
+            ipAddress: "10.1.2.3",
+            port: 70000,
+            flags: 0
+        ), channel: bridgeSystemLane)
+
+        XCTAssertTrue(applied.batches.isEmpty)
+    }
+
+
+    func testOptionForUnknownDatacenterIsDropped() {
+        let applied: BridgeOptionRecorder = BridgeOptionRecorder()
+        let bridge: ImpulseUpdateBridge = makeBridge(applied: applied)
+
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 9,
+            ipAddress: "10.1.2.3",
+            port: 443,
+            flags: 0
+        ), channel: bridgeSystemLane)
+
+        XCTAssertTrue(applied.batches.isEmpty)
+    }
+
+
+    func testValidOptionIsAppliedWhenAnotherOptionIsDropped() {
+        let applied: BridgeOptionRecorder = BridgeOptionRecorder()
+        let bridge: ImpulseUpdateBridge = makeBridge(applied: applied)
+
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 2,
+            ipAddress: "10.1.2.3",
+            port: 70000,
+            flags: 0
+        ), channel: bridgeSystemLane)
+        bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
+            id: 3,
+            ipAddress: "2001:db8::1",
+            port: 443,
+            flags: 0
+        ), channel: bridgeSystemLane)
+
+        XCTAssertEqual(applied.batches.count, 1)
+        XCTAssertEqual(applied.batches.first?.first?.id, 3)
+        XCTAssertEqual(applied.batches.first?.first?.ipAddress, "2001:db8::1")
+    }
+
+
+    func testUpdateDcOptionsOnSystemLaneSetsTheAddressSetOfTheContext() {
         let context: MTContext = impulseMakeContext()
+        context.setSeedAddressSetForDatacenterWithId(2, seedAddressSet: MTDatacenterAddressSet(addressList: [
+            MTDatacenterAddress(ip: "10.0.0.2", port: 443, preferForMedia: false, restrictToTcp: false, cdn: false, preferForProxy: false, secret: nil),
+        ]))
         let bridge: ImpulseUpdateBridge = ImpulseUpdateBridge(context: context)
 
         bridge.networkSessionDidReceive(tl: updateShortWithDcOption(
@@ -193,7 +348,7 @@ final class ImpulseUpdateBridgeTests: XCTestCase {
             ipAddress: "10.1.2.3",
             port: 443,
             flags: bridgeMediaOnlyFlag | bridgeCdnFlag
-        ))
+        ), channel: bridgeSystemLane)
         impulseFlushContextQueue()
 
         let addresses: [MTDatacenterAddress]? = context.addressSetForDatacenter(withId: 2).addressList as? [MTDatacenterAddress]

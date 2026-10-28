@@ -251,6 +251,9 @@ func impulseMakeEngineSession(
         parse: { (data: Data) -> Any? in
             return "update"
         },
+        knownDatacenterIds: { () -> Set<Int32> in
+            return []
+        },
         applyDcOptions: { (options: [ImpulseDcUpdateOption]) -> Void in
         }
     ),

@@ -286,12 +286,12 @@ final class ImpulseNetworkEngineSession: NetworkEngineSession {
     }
 
 
-    func handleUpdate(tl: [UInt8]) {
+    func handleUpdate(tl: [UInt8], channel: String) {
         self.queue.async { [weak self] in
             self?.noteHeard()
         }
         if self.role == .main {
-            self.updateBridge.networkSessionDidReceive(tl: tl)
+            self.updateBridge.networkSessionDidReceive(tl: tl, channel: channel)
         }
     }
 

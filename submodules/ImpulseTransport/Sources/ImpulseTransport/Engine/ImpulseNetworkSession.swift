@@ -23,8 +23,8 @@ public protocol ImpulseUpdateSink: AnyObject {
     /// The session was reset: updates may have been lost, so the receiver must resynchronize.
     func networkSessionDidReset()
 
-    /// A realtime update as its TL bytes.
-    func networkSessionDidReceive(tl: [UInt8])
+    /// A realtime update as its TL bytes, with the name of the realtime lane it came on, such as `system:config`.
+    func networkSessionDidReceive(tl: [UInt8], channel: String)
 }
 
 
@@ -224,10 +224,10 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
     }
 
 
-    /// Hands the sinks one received update, as its TL bytes.
-    public func deliverUpdate(tl: [UInt8]) {
+    /// Hands the sinks one received update, as its TL bytes, with the name of the realtime lane it came on.
+    public func deliverUpdate(tl: [UInt8], channel: String) {
         for sink: any ImpulseUpdateSink in self.currentSinks() {
-            sink.networkSessionDidReceive(tl: tl)
+            sink.networkSessionDidReceive(tl: tl, channel: channel)
         }
     }
 
