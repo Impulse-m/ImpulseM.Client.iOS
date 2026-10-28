@@ -147,6 +147,7 @@ private final class AuthFlowRequester: ImpulseAuthRequester, @unchecked Sendable
     private(set) var sentMethods: [String] = []
     private(set) var lastOptions: ImpulseRequestOptions?
     private(set) var gateStates: [Bool] = []
+    var onExecute: ((String) -> Void)?
 
 
     func execute(
@@ -154,6 +155,7 @@ private final class AuthFlowRequester: ImpulseAuthRequester, @unchecked Sendable
         options: ImpulseRequestOptions
     ) async -> Result<[UInt8], ImpulseRequestFailure> {
         sentMethods.append(request.method)
+        onExecute?(request.method)
         lastOptions = options
         guard !replies.isEmpty else {
             return .failure(.canceled)
@@ -478,9 +480,18 @@ final class ImpulseAuthFlowTests: XCTestCase {
         let fixture: Fixture = try makeFixture()
         try await signIn(fixture)
         fixture.socket.calls.removeAll()
+        let storage: AuthFlowStorage = fixture.storage
+        var sessionAtLogOut: Bool = false
+        fixture.requester.onExecute = { (method: String) -> Void in
+            sessionAtLogOut = storage.stored != nil
+        }
+        fixture.requester.replies = [.success([])]
 
         try await fixture.flow.signOut()
 
+        XCTAssertEqual(fixture.requester.sentMethods, ["auth.signIn", "auth.logOut"])
+        XCTAssertTrue(sessionAtLogOut)
+        XCTAssertEqual(fixture.requester.lastOptions, ImpulseRequestOptions())
         XCTAssertNil(fixture.storage.stored)
         XCTAssertEqual(fixture.pool.mintCount, 2)
         XCTAssertEqual(fixture.identityStore.values[ImpulseIdentityRules.storageKey], fixture.pool.issued[1])
@@ -489,5 +500,37 @@ final class ImpulseAuthFlowTests: XCTestCase {
             fixture.socket.calls,
             ["unsubscribe user:3", "disconnect", "token " + fixture.pool.issued[1], "connect"]
         )
+    }
+
+
+    func testFailingLogOutStillDiscardsSessionAndRekeysToFreshIdentity() async throws {
+        let fixture: Fixture = try makeFixture()
+        try await signIn(fixture)
+        fixture.socket.calls.removeAll()
+        let failure: ImpulseRequestFailure = .network(ImpulseCarrierFailure(sdkCode: 1, appCode: 0, appType: "", metadata: [:]))
+        fixture.requester.replies = [.failure(failure)]
+
+        try await fixture.flow.signOut()
+
+        XCTAssertEqual(fixture.requester.sentMethods, ["auth.signIn", "auth.logOut"])
+        XCTAssertNil(fixture.storage.stored)
+        XCTAssertEqual(fixture.pool.mintCount, 2)
+        XCTAssertEqual(fixture.identityStore.values[ImpulseIdentityRules.storageKey], fixture.pool.issued[1])
+        XCTAssertEqual(fixture.requester.gateStates, [true, false])
+        XCTAssertEqual(
+            fixture.socket.calls,
+            ["unsubscribe user:3", "disconnect", "token " + fixture.pool.issued[1], "connect"]
+        )
+    }
+
+
+    func testSignOutWithoutSessionDoesNotCallLogOut() async throws {
+        let fixture: Fixture = try makeFixture()
+
+        try await fixture.flow.signOut()
+
+        XCTAssertTrue(fixture.requester.sentMethods.isEmpty)
+        XCTAssertNil(fixture.storage.stored)
+        XCTAssertEqual(fixture.requester.gateStates, [false])
     }
 }

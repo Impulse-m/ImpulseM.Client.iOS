@@ -45,6 +45,7 @@ extension ImpulseRequestService: ImpulseAuthRequester {
 public actor ImpulseAuthFlow {
     private static let signInMethod: String = "auth.signIn"
     private static let signUpMethod: String = "auth.signUp"
+    private static let logOutMethod: String = "auth.logOut"
     private static let authorizationType: String = "auth.Authorization"
     private static let userType: String = "User"
     private static let authorizationArm: Int = 1
@@ -149,10 +150,15 @@ public actor ImpulseAuthFlow {
     }
 
 
-    /// Ends the session: the session tokens and the identity are discarded, the user lane is dropped and the socket is
-    /// rekeyed to a fresh identity. The pool is kept. A failed mint disconnects the socket and throws.
+    /// Ends the session: the server session is ended while it is still signed in, then the session tokens and the
+    /// identity are discarded, the user lane is dropped and the socket is rekeyed to a fresh identity. The pool is kept.
+    /// The outcome of the server call does not change the sign-out. A failed mint disconnects the socket and throws.
     public func signOut() async throws {
-        let userId: Int64 = storage.load()?.userId ?? 0
+        let session: ImpulseSessionTokens? = storage.load()
+        let userId: Int64 = session?.userId ?? 0
+        if session != nil {
+            await endServerSession()
+        }
         await tokens.clear()
         requester.setSignedIn(false)
         await identity.discard()
@@ -221,6 +227,21 @@ public actor ImpulseAuthFlow {
         case .failure(let failure):
             throw ImpulseAuthError.request(failure)
         }
+    }
+
+
+    /// Sends `auth.logOut` while the session is still signed in. The reply is ignored, success or failure alike, so a
+    /// failed call never blocks the local sign-out.
+    private func endServerSession() async {
+        guard let method: ImpulseMappingMethod = mapping.method(name: ImpulseAuthFlow.logOutMethod) else {
+            return
+        }
+        var writer: ImpulseTlWriter = ImpulseTlWriter()
+        writer.writeInt32(value: Int32(bitPattern: method.id))
+        guard let request: ImpulseEncodedRequest = try? transcoder.encodeRequest(tl: writer.toByteArray()) else {
+            return
+        }
+        _ = await requester.execute(request: request, options: ImpulseRequestOptions())
     }
 
 
