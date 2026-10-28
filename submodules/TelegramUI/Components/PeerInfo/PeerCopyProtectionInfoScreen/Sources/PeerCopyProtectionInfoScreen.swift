@@ -465,7 +465,7 @@ public final class PeerCopyProtectionInfoScreen: ViewControllerComponentContaine
                 let presentationData = self.context.sharedContext.currentPresentationData.with { $0 }
                 let controller = UndoOverlayController(
                     presentationData: presentationData,
-                    content: .premiumPaywall(title: nil, text: "Subscribe to [Telegram Premium]() to unlock this feature.", customUndoText: nil, timeout: nil, linkAction: nil),
+                    content: .premiumPaywall(title: nil, text: "Subscribe to [ImpulseM Premium]() to unlock this feature.", customUndoText: nil, timeout: nil, linkAction: nil),
                     action: { [weak self] action in
                         guard let self else {
                             return true

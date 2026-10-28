@@ -148,7 +148,7 @@ private enum InviteLinksListEntry: ItemListNodeEntry {
 private func paymentMethodListScreenEntries(presentationData: PresentationData, state: PaymentMethodListScreenState) -> [InviteLinksListEntry] {
     var entries: [InviteLinksListEntry] = []
 
-    entries.append(.header("Add your debit or credit card to buy goods and\nservices on Telegram."))
+    entries.append(.header("Add your debit or credit card to buy goods and\nservices on ImpulseM."))
     
     entries.append(.methodsHeader("PAYMENT METHOD"))
     entries.append(.addMethod("Add Payment Method"))
