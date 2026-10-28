@@ -558,6 +558,16 @@ app_groups_fragment = """
     telegram_bundle_id=telegram_bundle_id
 )
 
+keychain_access_groups_fragment = """
+    <key>keychain-access-groups</key>
+    <array>
+        <string>{telegram_team_id}.{telegram_bundle_id}</string>
+    </array>
+""".format(
+    telegram_team_id=telegram_team_id,
+    telegram_bundle_id=telegram_bundle_id
+)
+
 official_communication_notifications_fragment = """
 <key>com.apple.developer.usernotifications.communication</key>
 <true/>
@@ -590,6 +600,7 @@ plist_fragment(
     template = "".join([
         aps_fragment,
         app_groups_fragment,
+        keychain_access_groups_fragment,
         siri_fragment,
         associated_domains_fragment,
         icloud_fragment,
@@ -1042,6 +1053,8 @@ plist_fragment(
     <string>ImpulseM</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
+    <key>ImpulseKeychainAccessGroup</key>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionAttributes</key>
@@ -1075,6 +1088,7 @@ plist_fragment(
         <string>ShareRootController</string>
     </dict>
     """.format(
+        telegram_team_id = telegram_team_id,
         telegram_bundle_id = telegram_bundle_id,
     )
 )
@@ -1103,7 +1117,14 @@ plist_fragment(
 <array>
     <string>group.{telegram_bundle_id}</string>
 </array>
-""".format(telegram_bundle_id = telegram_bundle_id),
+<key>keychain-access-groups</key>
+<array>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
+</array>
+""".format(
+    telegram_team_id = telegram_team_id,
+    telegram_bundle_id = telegram_bundle_id,
+),
 )
 
 ios_extension(
@@ -1147,6 +1168,8 @@ plist_fragment(
     <string>ImpulseM</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
+    <key>ImpulseKeychainAccessGroup</key>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionAttributes</key>
@@ -1165,6 +1188,7 @@ plist_fragment(
         <string>NotificationViewController</string>
     </dict>
     """.format(
+        telegram_team_id = telegram_team_id,
         telegram_bundle_id = telegram_bundle_id,
     )
 )
@@ -1214,8 +1238,27 @@ swift_library(
     ]
 )'''
 
+plist_fragment(
+    name = "NotificationContentExtensionEntitlements",
+    extension = "entitlements",
+    template = """
+<key>com.apple.security.application-groups</key>
+<array>
+    <string>group.{telegram_bundle_id}</string>
+</array>
+<key>keychain-access-groups</key>
+<array>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
+</array>
+""".format(
+        telegram_team_id = telegram_team_id,
+        telegram_bundle_id = telegram_bundle_id,
+    ),
+)
+
 ios_extension(
     name = "NotificationContentExtension",
+    entitlements = ":NotificationContentExtensionEntitlements.entitlements",
     bundle_id = "{telegram_bundle_id}.NotificationContent".format(
         telegram_bundle_id = telegram_bundle_id,
     ),
@@ -1319,8 +1362,22 @@ genrule(
     ]
 )
 
+plist_fragment(
+    name = "WidgetExtensionEntitlements",
+    extension = "entitlements",
+    template = """
+<key>com.apple.security.application-groups</key>
+<array>
+    <string>group.{telegram_bundle_id}</string>
+</array>
+""".format(
+        telegram_bundle_id = telegram_bundle_id,
+    ),
+)
+
 ios_extension(
     name = "WidgetExtension",
+    entitlements = ":WidgetExtensionEntitlements.entitlements",
     bundle_id = "{telegram_bundle_id}.Widget".format(
         telegram_bundle_id = telegram_bundle_id,
     ),
@@ -1372,6 +1429,8 @@ plist_fragment(
     <string>ImpulseM</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
+    <key>ImpulseKeychainAccessGroup</key>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionAttributes</key>
@@ -1397,6 +1456,7 @@ plist_fragment(
         <string>IntentHandler</string>
     </dict>
     """.format(
+        telegram_team_id = telegram_team_id,
         telegram_bundle_id = telegram_bundle_id,
     )
 )
@@ -1492,8 +1552,27 @@ ios_unit_test(
     ]
 )'''
 
+plist_fragment(
+    name = "IntentsExtensionEntitlements",
+    extension = "entitlements",
+    template = """
+<key>com.apple.security.application-groups</key>
+<array>
+    <string>group.{telegram_bundle_id}</string>
+</array>
+<key>keychain-access-groups</key>
+<array>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
+</array>
+""".format(
+        telegram_team_id = telegram_team_id,
+        telegram_bundle_id = telegram_bundle_id,
+    ),
+)
+
 ios_extension(
     name = "IntentsExtension",
+    entitlements = ":IntentsExtensionEntitlements.entitlements",
     bundle_id = "{telegram_bundle_id}.SiriIntents".format(
         telegram_bundle_id = telegram_bundle_id,
     ),
@@ -1629,6 +1708,8 @@ plist_fragment(
     <string>ImpulseM</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
+    <key>ImpulseKeychainAccessGroup</key>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPointIdentifier</key>
@@ -1644,12 +1725,32 @@ plist_fragment(
         </dict>
     </dict>
     """.format(
+        telegram_team_id = telegram_team_id,
         telegram_bundle_id = telegram_bundle_id
     )
 )
 
+plist_fragment(
+    name = "NotificationServiceExtensionEntitlements",
+    extension = "entitlements",
+    template = """
+<key>com.apple.security.application-groups</key>
+<array>
+    <string>group.{telegram_bundle_id}</string>
+</array>
+<key>keychain-access-groups</key>
+<array>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
+</array>
+""".format(
+        telegram_team_id = telegram_team_id,
+        telegram_bundle_id = telegram_bundle_id,
+    ),
+)
+
 ios_extension(
     name = "NotificationServiceExtension" + notificationServiceExtensionVersion,
+    entitlements = ":NotificationServiceExtensionEntitlements.entitlements",
     bundle_id = "{telegram_bundle_id}.NotificationService".format(
         telegram_bundle_id = telegram_bundle_id,
     ),
@@ -1704,6 +1805,8 @@ plist_fragment(
     <string>APPL</string>
     <key>CFBundleSignature</key>
     <string>????</string>
+    <key>ImpulseKeychainAccessGroup</key>
+    <string>{telegram_team_id}.{telegram_bundle_id}</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
     <key>LSApplicationQueriesSchemes</key>
@@ -1873,6 +1976,7 @@ plist_fragment(
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
     """.format(
+        telegram_team_id = telegram_team_id,
         telegram_bundle_id = telegram_bundle_id,
     )
 )
