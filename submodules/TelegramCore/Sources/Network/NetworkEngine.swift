@@ -6,6 +6,7 @@ import MtProtoKit
 public enum NetworkEngineKind: String, Codable, Equatable {
     case mtProtoKit
     case rust
+    case impulse
 }
 
 /// Per-request transport options.

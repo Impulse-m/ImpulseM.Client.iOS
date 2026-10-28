@@ -463,12 +463,12 @@ private func resolveNetworkEngine(accountId: AccountRecordId, context: MTContext
     case .mtProtoKit:
         Logger.shared.log("Network", "Account \(accountId.int64): engine mtProtoKit")
         return MtProtoKitEngine(context: context)
-    case .rust:
+    case .rust, .impulse:
         if let engine = factory.makeEngine(context: context, isAppExtension: isAppExtension) {
             Logger.shared.log("Network", "Account \(accountId.int64): engine \(engine.kind.rawValue)")
             return engine
         } else {
-            Logger.shared.log("Network", "Account \(accountId.int64): engine mtProtoKit (factory declined rust)")
+            Logger.shared.log("Network", "Account \(accountId.int64): engine mtProtoKit (factory declined \(preferredEngine.rawValue))")
             return MtProtoKitEngine(context: context)
         }
     }
@@ -1268,7 +1268,7 @@ public final class Network: NSObject {
             switch kind {
             case .mtProtoKit:
                 replacement = MtProtoKitEngine(context: context)
-            case .rust:
+            case .rust, .impulse:
                 replacement = engineFactory?.makeEngine(context: context, isAppExtension: isAppExtension)
             }
             if replacement == nil {
