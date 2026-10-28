@@ -36,7 +36,7 @@ public final class ImpulseGapTracker: @unchecked Sendable {
 
         let dropped: Bool = positionDropped.remove(channel) != nil
 
-        if channel.hasPrefix(ImpulseGapTracker.userLanePrefix) || channel.hasPrefix(ImpulseLaneRouter.sessionLanePrefix) {
+        if channel.hasPrefix(ImpulseGapTracker.userLanePrefix) {
             return dropped || !recovered
         }
 

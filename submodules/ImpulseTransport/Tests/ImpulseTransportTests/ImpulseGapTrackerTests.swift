@@ -69,4 +69,23 @@ final class ImpulseGapTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.onSubscribed(channel: "channel:10", recovered: false, wasRecovering: false))
         XCTAssertTrue(tracker.onSubscribed(channel: "channel:9", recovered: false, wasRecovering: false))
     }
+
+
+    func testFreshSessionLaneSubscribeNeedsNoDifference() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        XCTAssertFalse(tracker.onSubscribed(channel: "session:5:77", recovered: false, wasRecovering: false))
+    }
+
+
+    func testFailedSessionLaneRecoveryNeedsNoDifference() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        XCTAssertFalse(tracker.onSubscribed(channel: "session:5:77", recovered: false, wasRecovering: true))
+    }
+
+
+    func testDroppedSessionLanePositionNeedsDifferenceEvenIfRecovered() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        tracker.onUnsubscribed(channel: "session:5:77", code: 2502)
+        XCTAssertTrue(tracker.onSubscribed(channel: "session:5:77", recovered: true, wasRecovering: true))
+    }
 }
