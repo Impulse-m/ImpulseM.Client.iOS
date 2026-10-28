@@ -345,21 +345,16 @@ final class ImpulseNetworkSessionTests: XCTestCase {
     }
 
 
-    /// Without a total deadline a network failure is retried, as on Android. The carrier answers the third send as
-    /// cancelled, which ends the call, so the test is bounded by its script.
+    /// Without a total deadline a network failure is retried, as on Android. The carrier answers the third send with
+    /// a reply, which ends the call, so the test is bounded by its script. A cancelled call never completes its
+    /// request, so a cancelled third answer would leave the test waiting forever.
     func testNetworkFailureIsRetriedWithoutDeadline() async throws {
         let carrierFailure: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
-        let cancelledFailure: ImpulseCarrierFailure = ImpulseCarrierFailure(
-            sdkCode: networkSessionCancelledCode,
-            appCode: 0,
-            appType: "",
-            metadata: [:]
-        )
         let clock: NetworkSessionClock = NetworkSessionClock()
         let session: ImpulseNetworkSession = try makeSession(
             datacenterId: 4,
             role: .main,
-            replies: [.failure(carrierFailure), .failure(carrierFailure), .failure(cancelledFailure)],
+            replies: [.failure(carrierFailure), .failure(carrierFailure), .success([0x08, 0x01])],
             delegate: nil,
             clock: clock
         )
@@ -373,7 +368,7 @@ final class ImpulseNetworkSessionTests: XCTestCase {
             acknowledged: nil
         )
 
-        XCTAssertEqual(self.failureValue(outcome), .canceled)
+        XCTAssertEqual(self.successValue(outcome) as? String, "parsed")
         XCTAssertEqual(clock.waitedSeconds(), [1, 2])
     }
 
