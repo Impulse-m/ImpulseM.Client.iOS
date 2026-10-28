@@ -1,0 +1,285 @@
+//
+//  NativeWebSocket.swift
+//  SwiftCentrifuge
+//
+//  Created by Anton Selyanin on 03.05.2023.
+//
+
+import Foundation
+
+@available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+final class NativeWebSocket: NSObject, WebSocketInterface, URLSessionWebSocketDelegate, @unchecked Sendable {
+
+    var onConnect: (() -> Void)?
+
+    var onDisconnect: ((CentrifugeDisconnectOptions, Error?) -> Void)?
+
+    var onData: ((Data) -> Void)?
+
+    private var session: URLSession?
+    private let log: CentrifugeLogger
+    private let request: URLRequest
+    private let urlSessionConfigurationProvider: (() -> URLSessionConfiguration)
+    private let tlsSkipVerify: Bool
+    private let tlsChallengeHandler: CentrifugeTLSChallengeHandler?
+    private let queue: DispatchQueue
+
+    /// The websocket is considered 'active' when `task` is not nil
+    private var task: URLSessionWebSocketTask?
+
+    init(request: URLRequest, urlSessionConfigurationProvider: URLSessionConfigurationProvider?,
+         tlsSkipVerify: Bool, tlsChallengeHandler: CentrifugeTLSChallengeHandler?, queue: DispatchQueue, log: CentrifugeLogger) {
+        var request = request
+        request.setValue("centrifuge-protobuf", forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        self.request = request
+        self.log = log
+        self.urlSessionConfigurationProvider = urlSessionConfigurationProvider ?? { URLSessionConfiguration.default }
+        self.tlsSkipVerify = tlsSkipVerify
+        self.tlsChallengeHandler = tlsChallengeHandler
+        self.queue = queue
+    }
+
+    deinit {
+        session?.invalidateAndCancel()
+    }
+
+    func connect() {
+        assertIsOnQueue(queue)
+        if let task = task {
+            log.warning("Creating a new connection while the previous is active, socket state: \(task.state.asString)")
+            task.cancel()
+        }
+
+        log.debug("Connecting...")
+
+        let task = getOrCreateSession().webSocketTask(with: request)
+        // URLSessionWebSocketTask fails any message larger than 1 MiB by default (and the
+        // connection with it). The server decides how large a message can be.
+        task.maximumMessageSize = Int(Int32.max)
+        self.task = task
+        doRead(task: task)
+        task.resume()
+    }
+
+    func close() {
+        assertIsOnQueue(queue)
+        onConnect = nil
+        onDisconnect = nil
+        onData = nil
+
+        guard let task = task else { return }
+        self.task = nil
+
+        log.debug("Closing...")
+        task.cancel(with: .normalClosure, reason: nil)
+        // Give the close frame a moment, then drop whatever is left: the peer may never
+        // answer it (a dead link), and nothing waits for this socket anymore.
+        if let session = session {
+            queue.asyncAfter(deadline: .now() + 1) {
+                session.invalidateAndCancel()
+            }
+        }
+    }
+
+    func write(data: Data) {
+        assertIsOnQueue(queue)
+        guard let task = task else {
+            log.warning("Attempted to write to an inactive websocket connection")
+            return
+        }
+
+        task.send(.data(data), completionHandler: { [weak self] error in
+            guard let error = error else { return }
+            self?.log.trace("Failed to send message, error: \(error)")
+        })
+    }
+
+    private func doRead(task: URLSessionWebSocketTask) {
+        task.receive { [weak self] (result) in
+            guard let self = self else { return }
+            assertIsOnQueue(self.queue)
+            // Frames read for a task that was closed or replaced are not delivered.
+            guard task === self.task else { return }
+
+            switch result {
+                case .success(let message):
+                    switch message {
+                        case .string:
+                            self.log.warning("Received unexpected string packet")
+                        case .data(let data):
+                            self.onData?(data)
+
+                        @unknown default:
+                            break
+                    }
+
+                case .failure(let error):
+                    self.log.trace("Read error: \(error)")
+                    return
+            }
+
+            self.doRead(task: task)
+        }
+    }
+
+    private func getOrCreateSession() -> URLSession {
+        if let session = session {
+            return session
+        }
+
+        let operationQueue = OperationQueue()
+        operationQueue.underlyingQueue = queue
+
+        let configuration = urlSessionConfigurationProvider()
+
+        // For some reason, `URLSessionWebSocketTask` will only respect the proxy
+        // configuration if started with a URL and not a URLRequest. As a temporary
+        // workaround, port header information from the request to the session.
+        //
+        // We copied this workaround from Signal-iOS web socket implementation
+        var httpAdditionalHeaders = configuration.httpAdditionalHeaders ?? .init()
+        request.allHTTPHeaderFields?.forEach { httpAdditionalHeaders[$0.key] = $0.value }
+        configuration.httpAdditionalHeaders = httpAdditionalHeaders
+
+        let delegate = URLSessionDelegateBox(delegate: self)
+        let session = URLSession(
+            configuration: configuration, 
+            delegate: delegate,
+            delegateQueue: operationQueue
+        )
+        self.session = session
+
+        return session
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        assertIsOnQueue(queue)
+        log.debug("Connected")
+        self.onConnect?()
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        assertIsOnQueue(queue)
+        guard let task = self.task, task === webSocketTask else {
+            // Ignore callbacks from obsolete tasks
+            return
+        }
+
+        handleTaskClose(task: task, code: closeCode, reason: reason, error: nil)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        assertIsOnQueue(queue)
+        guard let task = task as? URLSessionWebSocketTask, task === self.task else {
+            // Ignore callbacks from obsolete tasks
+            return
+        }
+
+        handleTaskClose(task: task, code: task.closeCode, reason: task.closeReason, error: error)
+    }
+
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        assertIsOnQueue(queue)
+
+        // This is a raw forward of every challenge this session-level delegate method
+        // receives (server-trust, client-certificate for mTLS, and also NTLM/Negotiate,
+        // e.g. for an authenticating proxy - not filtered, same as Kingfisher's
+        // equivalent AuthenticationChallengeResponsible.downloader(_:didReceive:) forward).
+        // A handler only interested in TLS trust decisions should check
+        // challenge.protectionSpace.authenticationMethod itself, as CentrifugeTLSChallengeHandler's
+        // documentation instructs. (HTTP Basic/Digest never reach this method at all;
+        // those are task-level only and this class doesn't implement that delegate method.)
+        if let tlsChallengeHandler = tlsChallengeHandler {
+            log.debug("Forwarding challenge to tlsChallengeHandler")
+            tlsChallengeHandler(challenge, completionHandler)
+            return
+        }
+
+        // tlsSkipVerify only ever means "don't verify the server's certificate" - unlike
+        // tlsChallengeHandler above, it does not apply to any other challenge type (client
+        // certificate, NTLM, Negotiate), matching what it has always meant on the
+        // Starscream transport (a flag scoped purely to TLS certificate chain validation).
+        if tlsSkipVerify, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let trust = challenge.protectionSpace.serverTrust {
+            log.debug("Trusting server certificate because tlsSkipVerify is enabled")
+            completionHandler(.useCredential, URLCredential(trust: trust))
+            return
+        }
+
+        log.debug("Using default TLS handling")
+        completionHandler(.performDefaultHandling, nil)
+    }
+
+    private func handleTaskClose(task: URLSessionWebSocketTask,
+                                 code: URLSessionWebSocketTask.CloseCode, reason: Data?, error: Error?) {
+        let reason = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "transport closed"
+
+        log.debug("WebSocket closed, code: \(code.rawValue), reason: \(reason)")
+
+        let (code, reconnect) = interpretCloseCode(UInt32(code.rawValue))
+        let disconnect = CentrifugeDisconnectOptions(code: code, reason: reason, reconnect: reconnect)
+
+        self.log.trace("Socket disconnected, code: \(task.closeCode.rawValue), reconnect: \(reconnect)")
+
+        self.task?.cancel()
+        self.task = nil
+        self.onDisconnect?(disconnect, error)
+    }
+}
+
+
+/// URLSession holds it's delegate by strong reference.
+/// We need a wrapper to break a reference cycle between `NativeWebSocket` and `URLSession`
+///
+@available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+private final class URLSessionDelegateBox: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+    private weak var delegate: URLSessionWebSocketDelegate?
+
+    init(delegate: URLSessionWebSocketDelegate?) {
+        self.delegate = delegate
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didOpenWithProtocol protocol: String?) {
+        delegate?.urlSession?(
+            session, webSocketTask: webSocketTask, didOpenWithProtocol: `protocol`)
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        delegate?.urlSession?(
+            session, webSocketTask: webSocketTask, didCloseWith: closeCode, reason: reason)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        delegate?.urlSession?(session, task: task, didCompleteWithError: error)
+    }
+
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard let delegate = delegate else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+
+        delegate.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+    }
+}
+
+private extension URLSessionTask.State {
+    var asString: String {
+        switch self {
+            case .running:
+                return "running"
+            case .suspended:
+                return "suspended"
+            case .canceling:
+                return "cancelling"
+            case .completed:
+                return "completed"
+            @unknown default:
+                return "unknown"
+        }
+    }
+}
