@@ -76,7 +76,7 @@ public class UnauthorizedAccount {
     let stateManager: UnauthorizedAccountStateManager
     private let proxySettingsDisposable = MetaDisposable()
     private let networkEngineStateDisposable = MetaDisposable()
-    
+
     private let updateLoginTokenPipe = ValuePipe<Void>()
     public var updateLoginTokenEvents: Signal<Void, NoError> {
         return self.updateLoginTokenPipe.signal()
@@ -196,41 +196,10 @@ public class UnauthorizedAccount {
             }
         })
         
-        // The Rust engine makes and binds its own temporary keys, so only the permanent keys are made
-        // ahead (by the engine, over whatever route works); MtProtoKit's temporary keys would only add
-        // TCP connections on a network that blocks it.
-        let prefetchedSelector: MTDatacenterAuthInfoSelector = network.engineKind == .rust ? .persistent : .ephemeralMain
-        network.context.performBatchUpdates({
-            var datacenterIds: [Int] = [1, 2]
-            if testingEnvironment {
-                datacenterIds = [3]
-            } else {
-                datacenterIds.append(contentsOf: [4])
-            }
-            for id in datacenterIds {
-                if network.context.authInfoForDatacenter(withId: id, selector: .persistent) == nil {
-                    network.context.authInfoForDatacenter(withIdRequired: id, isCdn: false, selector: prefetchedSelector, allowUnboundEphemeralKeys: false)
-                }
-            }
-            network.context.beginExplicitBackupAddressDiscovery()
-        })
-        
-        // Nothing is authorized yet, so a permanent key the server no longer knows is replaced rather than
-        // logging anything out. Only with the Rust engine, whose logout check reaches the server over any
-        // route; MtProtoKit keeps its behaviour.
-        network.permanentKeyUnknown = { [weak network] datacenterId, authKeyId in
-            guard let network = network, network.engineKind == .rust, datacenterId == network.datacenterId else {
-                return
-            }
-            let context = network.context
-            guard context.authInfoForDatacenter(withId: datacenterId, selector: .persistent)?.authKeyId == authKeyId else {
-                return
-            }
-            Logger.shared.log("Network", "the server does not know permanent key \(authKeyId) of dc\(datacenterId) before login; making a new one")
-            context.updateAuthInfoForDatacenter(withId: datacenterId, authInfo: nil, selector: .persistent)
-            context.authInfoForDatacenter(withIdRequired: datacenterId, isCdn: false, selector: .persistent, allowUnboundEphemeralKeys: false)
-        }
-        
+        // No auth keys are prefetched and no backup address discovery runs: the ImpulseM transport reaches
+        // each datacenter through its fleet and connection identity. The auth.exportAuthorization transfer
+        // is not used on this path.
+
         self.stateManager.reset()
 
         self.proxySettingsDisposable.set((accountManager.sharedData(keys: [SharedDataKeys.proxySettings])
@@ -240,7 +209,7 @@ public class UnauthorizedAccount {
         |> distinctUntilChanged).start(next: { [weak network] activeServer in
             network?.updateProxySettings(activeServer)
         }))
-        
+
         #if os(macOS)
         // A login has no app configuration of its own: the server's kill switch reaches it through the
         // state authorized accounts share. Live switching is macOS only, as for authorized accounts.
