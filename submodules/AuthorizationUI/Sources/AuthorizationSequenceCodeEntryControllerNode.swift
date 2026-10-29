@@ -16,6 +16,7 @@ import SolidRoundedButtonNode
 import AuthorizationUtils
 import TelegramStringFormatting
 import TextNodeWithEntities
+import ImpulseFeatures
 
 final class AuthorizationSequenceCodeEntryControllerNode: ASDisplayNode, UITextFieldDelegate {
     private let strings: PresentationStrings
@@ -423,7 +424,7 @@ final class AuthorizationSequenceCodeEntryControllerNode: ASDisplayNode, UITextF
         
         self.currentOptionNode.attributedText = authorizationCurrentOptionText(codeType, phoneNumber: self.phoneNumber, email: self.email, strings: self.strings, primaryColor: self.theme.list.itemPrimaryTextColor, accentColor: self.theme.list.itemAccentColor)
         self.currentOptionActivateAreaNode.accessibilityLabel = self.currentOptionNode.attributedText?.string ?? ""
-        if case .missedCall = codeType {
+        if case .missedCall = codeType, ImpulseFeatures.CALL_VERIFICATION {
             self.currentOptionInfoNode.attributedText = NSAttributedString(string: self.strings.Login_CodePhonePatternInfoText, font: Font.regular(17.0), textColor: self.theme.list.itemPrimaryTextColor, paragraphAlignment: .center)
             self.currentOptionInfoActivateAreaNode.accessibilityLabel = self.currentOptionInfoNode.attributedText?.string ?? ""
             if self.currentOptionInfoActivateAreaNode.supernode == nil {
@@ -538,12 +539,12 @@ final class AuthorizationSequenceCodeEntryControllerNode: ASDisplayNode, UITextF
         var textFieldPlaceholder = ""
         if let codeType = self.codeType {
             switch codeType {
-            case .missedCall:
+            case .missedCall where ImpulseFeatures.CALL_VERIFICATION:
                 self.titleNode.attributedText = NSAttributedString(string: self.strings.Login_EnterMissingDigits, font: Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
             case .email:
                 self.titleNode.attributedText = NSAttributedString(string: self.strings.Login_EnterCodeEmailTitle, font: Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
                 animationName = "IntroLetter"
-            case .sms:
+            case .sms, .missedCall:
                 self.titleNode.attributedText = NSAttributedString(string: self.strings.Login_EnterCodeSMSTitle, font: Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
             case .fragment:
                 self.titleNode.attributedText = NSAttributedString(string: self.strings.Login_EnterCodeFragmentTitle, font: Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
@@ -608,10 +609,12 @@ final class AuthorizationSequenceCodeEntryControllerNode: ASDisplayNode, UITextF
         case let .otherSession(length):
             codeLength = Int(length)
         case let .missedCall(prefix, length):
-            if prefix.hasPrefix("+") {
-                codePrefix = prefix
-            } else {
-                codePrefix = InteractivePhoneFormatter().updateText("+" + prefix).1
+            if ImpulseFeatures.CALL_VERIFICATION {
+                if prefix.hasPrefix("+") {
+                    codePrefix = prefix
+                } else {
+                    codePrefix = InteractivePhoneFormatter().updateText("+" + prefix).1
+                }
             }
             codeLength = Int(length)
         case let .sms(length):
@@ -666,7 +669,7 @@ final class AuthorizationSequenceCodeEntryControllerNode: ASDisplayNode, UITextF
                 items.append(AuthorizationLayoutItem(node: self.codeInputView, size: codeFieldSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 30.0, maxValue: 30.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
                 
                 items.append(AuthorizationLayoutItem(node: self.nextOptionButtonNode, size: nextOptionSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 50.0, maxValue: 120.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
-            case .missedCall:
+            case .missedCall where ImpulseFeatures.CALL_VERIFICATION:
                 self.titleIconNode.isHidden = false
                 
                 if self.titleIconNode.image == nil {
