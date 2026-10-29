@@ -28,6 +28,7 @@ private enum FakeMediaCall: Equatable {
     case microphone(Bool)
     case noiseSuppression(Bool)
     case camera(Bool)
+    case publishCamera
     case publishScreenShare
     case unpublishScreenShare
     case audioInput(String)
@@ -184,6 +185,11 @@ private final class FakeLiveKitRoomSession: LiveKitCallRoomSession, @unchecked S
 
     func setCameraEnabled(_ isEnabled: Bool) async throws {
         record(.camera(isEnabled))
+    }
+
+
+    func publishCamera(_ track: LiveKitLocalVideoTrack) async throws {
+        record(.publishCamera)
     }
 
 
@@ -536,6 +542,57 @@ final class LiveKitCallContextTests: XCTestCase {
         XCTAssertEqual(participants.count, 1)
         XCTAssertEqual(participants.first?.identity, "p.42")
         XCTAssertTrue(participants.first?.videoPublications.first?.videoTrack === track)
+    }
+
+
+    func testMediaPublishesCameraTrackToRoomSession() async throws {
+        let session: FakeLiveKitRoomSession = FakeLiveKitRoomSession(connectBehavior: .succeed, disconnectBehavior: .succeed)
+        let context: LiveKitCallContext = try makeContext(session: session)
+        context.start()
+        let reachedConnected: Bool = await waitForState(context) { (state: LiveKitCallState) -> Bool in
+            return state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        try await context.media?.publishCamera(FakeLocalVideoTrack())
+        XCTAssertEqual(session.mediaCalls, [.publishCamera])
+    }
+
+
+    func testRemoteTrackChangeIsReportedOnlyWhileConnected() async throws {
+        let session: FakeLiveKitRoomSession = FakeLiveKitRoomSession(connectBehavior: .succeed, disconnectBehavior: .succeed)
+        let context: LiveKitCallContext = try makeContext(session: session)
+        var changeCount: Int = 0
+        context.onRemoteTracksChanged = {
+            changeCount += 1
+        }
+        context.roomRemoteTracksDidChange()
+        XCTAssertEqual(changeCount, 0)
+        context.start()
+        let reachedConnected: Bool = await waitForState(context) { (state: LiveKitCallState) -> Bool in
+            return state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.roomRemoteTracksDidChange()
+        XCTAssertEqual(changeCount, 1)
+        context.stop()
+        context.roomRemoteTracksDidChange()
+        XCTAssertEqual(changeCount, 1)
+    }
+
+
+    func testMediaUpdateFailureEndsCallWithConnectionFailure() async throws {
+        let session: FakeLiveKitRoomSession = FakeLiveKitRoomSession(connectBehavior: .succeed, disconnectBehavior: .succeed)
+        let context: LiveKitCallContext = try makeContext(session: session)
+        context.start()
+        let reachedConnected: Bool = await waitForState(context) { (state: LiveKitCallState) -> Bool in
+            return state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.failMediaUpdate()
+        let reachedEnded: Bool = await waitForState(context) { (state: LiveKitCallState) -> Bool in
+            return state == .ended(.connectionFailed)
+        }
+        XCTAssertTrue(reachedEnded)
     }
 
 

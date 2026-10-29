@@ -9,6 +9,7 @@ import Foundation
 import Cocoa
 import AVFoundation
 import LiveKit
+import SwiftSignalKit
 
 
 public enum OngoingCallVideoOrientation {
@@ -62,7 +63,6 @@ public final class OngoingCallVideoCapturer {
     public private(set) var track: LocalVideoTrack?
     private var onFatalError: (() -> Void)?
     private var onPause: ((Bool) -> Void)?
-    private var outgoingBridge: LiveKitOutgoingVideoBridge?
     private var trackTask: Task<LocalVideoTrack?, Never>?
 
 
@@ -129,38 +129,32 @@ public final class OngoingCallVideoCapturer {
                 completion(nil)
                 return
             }
-            let videoView: VideoView = VideoView(frame: .zero)
-            videoView.track = track
-            videoView.layoutMode = .fit
-            let bridge: LiveKitOutgoingVideoBridge = LiveKitOutgoingVideoBridge(track: track)
-            self.outgoingBridge = bridge
-            videoView.add(delegate: bridge)
-            let presentationView: OngoingCallContextPresentationCallVideoView = OngoingCallContextPresentationCallVideoView(
-                view: videoView,
-                setOnFirstFrameReceived: { callback in
-                    bridge.onFirstFrame = callback
-                },
-                getOrientation: {
-                    return .rotation0
-                },
-                getAspect: {
-                    return bridge.aspect
-                },
-                setOnOrientationUpdated: { _ in
-                },
-                setVideoContentMode: { gravity in
-                    let isFill: Bool = gravity == .resizeAspectFill
-                    videoView.layoutMode = isFill ? .fill : .fit
-                },
-                setOnIsMirroredUpdated: { _ in
-                },
-                setIsPaused: { paused in
-                    videoView.isEnabled = !paused
-                },
-                renderToSize: { _, _ in
-                }
-            )
-            completion(presentationView)
+            completion(makeLiveKitCallVideoPresentationView(track: track))
+        }
+    }
+
+
+    /// The camera track as a publishable value, created on first use. Nil when the track cannot be created.
+    @MainActor
+    public func makeLocalVideoTrack() async -> LiveKitLocalVideoTrack? {
+        guard let track: LocalVideoTrack = await self.ensureTrack() else {
+            return nil
+        }
+        return LiveKitSDKLocalVideoTrack(sdkTrack: track)
+    }
+
+
+    /// Emits the local track once it is created. Emits nil when no track can be created.
+    public func video() -> Signal<VideoTrack?, NoError> {
+        return Signal { (subscriber: Subscriber<VideoTrack?, NoError>) -> Disposable in
+            let task: Task<Void, Never> = Task { @MainActor in
+                let track: LocalVideoTrack? = await self.ensureTrack()
+                subscriber.putNext(track)
+                subscriber.putCompletion()
+            }
+            return ActionDisposable {
+                task.cancel()
+            }
         }
     }
 
@@ -225,14 +219,60 @@ public final class OngoingCallVideoCapturer {
 
 
 
-/// Reports the first rendered frame of an outgoing LiveKit view and the aspect ratio of its track.
-private final class LiveKitOutgoingVideoBridge: NSObject, VideoViewDelegate {
+/// The LiveKit camera or screen track of this device, as the call engine publishes it.
+public final class LiveKitSDKLocalVideoTrack: LiveKitLocalVideoTrack {
+    public let sdkTrack: LocalVideoTrack?
+
+
+    init(sdkTrack: LocalVideoTrack?) {
+        self.sdkTrack = sdkTrack
+    }
+}
+
+
+/// Renders a LiveKit video track into a call video view. The local preview and the remote video of a call use this view.
+public func makeLiveKitCallVideoPresentationView(track: VideoTrack) -> OngoingCallContextPresentationCallVideoView {
+    let videoView: VideoView = VideoView(frame: .zero)
+    videoView.track = track
+    videoView.layoutMode = .fit
+    let bridge: LiveKitCallVideoBridge = LiveKitCallVideoBridge(track: track)
+    videoView.add(delegate: bridge)
+    return OngoingCallContextPresentationCallVideoView(
+        view: videoView,
+        setOnFirstFrameReceived: { callback in
+            bridge.onFirstFrame = callback
+        },
+        getOrientation: {
+            return .rotation0
+        },
+        getAspect: {
+            return bridge.aspect
+        },
+        setOnOrientationUpdated: { _ in
+        },
+        setVideoContentMode: { gravity in
+            let isFill: Bool = gravity == .resizeAspectFill
+            videoView.layoutMode = isFill ? .fill : .fit
+        },
+        setOnIsMirroredUpdated: { _ in
+        },
+        setIsPaused: { paused in
+            videoView.isEnabled = !paused
+        },
+        renderToSize: { _, _ in
+        }
+    )
+}
+
+
+/// Reports the first rendered frame of a LiveKit call view and the aspect ratio of its track.
+private final class LiveKitCallVideoBridge: NSObject, VideoViewDelegate {
     var onFirstFrame: ((Float) -> Void)?
-    private let track: LocalVideoTrack
+    private let track: VideoTrack
     private var hasReportedFirstFrame: Bool = false
 
 
-    init(track: LocalVideoTrack) {
+    init(track: VideoTrack) {
         self.track = track
         super.init()
     }

@@ -63,6 +63,7 @@ protocol LiveKitRoomEventSink: AnyObject {
     func roomDidFailToConnect()
     func roomDidDisconnectUnexpectedly()
     func roomDidReportMediaEncryption(_ encryptionState: LiveKitMediaEncryptionState)
+    func roomRemoteTracksDidChange()
 }
 
 
@@ -108,6 +109,9 @@ public final class LiveKitCallContext: LiveKitRoomEventSink {
 
     public private(set) var state: LiveKitCallState = .connecting
     public var onStateChanged: ((LiveKitCallState) -> Void)?
+
+    /// Called when a remote track is subscribed or unsubscribed while the call is connected.
+    public var onRemoteTracksChanged: (() -> Void)?
 
     /// The media of the call room: mute, noise, camera, devices and remote participants. Nil before `start()` and once the call is ending.
     public var media: LiveKitCallMedia? {
@@ -213,6 +217,20 @@ public final class LiveKitCallContext: LiveKitRoomEventSink {
         if encryptionState == .failed {
             terminate(.mediaEncryptionFailed)
         }
+    }
+
+
+    func roomRemoteTracksDidChange() {
+        guard state == .connected, !isTerminating else {
+            return
+        }
+        onRemoteTracksChanged?()
+    }
+
+
+    /// Ends the call when a microphone, camera or device change cannot be applied to the room, as the Android call does.
+    public func failMediaUpdate() {
+        terminate(.connectionFailed)
     }
 
 
@@ -354,6 +372,20 @@ private final class LiveKitRoomDelegateBridge: NSObject, RoomDelegate, @unchecke
             self?.sink?.roomDidReportMediaEncryption(encryptionState)
         }
     }
+
+
+    func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
+        Task { @MainActor [weak self] in
+            self?.sink?.roomRemoteTracksDidChange()
+        }
+    }
+
+
+    func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
+        Task { @MainActor [weak self] in
+            self?.sink?.roomRemoteTracksDidChange()
+        }
+    }
 }
 
 
@@ -406,6 +438,11 @@ private final class LiveKitSDKRoomSession: LiveKitCallRoomSession {
 
     func setCameraEnabled(_ isEnabled: Bool) async throws {
         try await roomMedia.setCameraEnabled(isEnabled)
+    }
+
+
+    func publishCamera(_ track: LiveKitLocalVideoTrack) async throws {
+        try await roomMedia.publishCamera(track)
     }
 
 

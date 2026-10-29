@@ -53,6 +53,21 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
     }
 
 
+    func publishCamera(_ track: LiveKitLocalVideoTrack) async throws {
+        guard let sdkTrack: LocalVideoTrack = track.sdkTrack else {
+            throw LiveKitRoomMediaError.trackHasNoSdkTrack
+        }
+        let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: isGroupCall)
+        let cameraPublications: [LocalTrackPublication] = localParticipant.localVideoTracks.filter { (publication: LocalTrackPublication) -> Bool in
+            return publication.source == .camera
+        }
+        for publication: LocalTrackPublication in cameraPublications {
+            try await localParticipant.unpublish(publication: publication)
+        }
+        try await localParticipant.publish(videoTrack: sdkTrack, options: publishOptions)
+    }
+
+
     func publishScreenShare(_ track: LiveKitLocalVideoTrack) async throws {
         guard let sdkTrack: LocalVideoTrack = track.sdkTrack else {
             throw LiveKitRoomMediaError.trackHasNoSdkTrack

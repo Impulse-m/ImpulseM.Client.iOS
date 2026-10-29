@@ -8,6 +8,7 @@ enum FakeLiveKitRoomMediaCall: Equatable {
     case setMicrophoneEnabled(Bool)
     case setNoiseSuppressionEnabled(Bool)
     case setCameraEnabled(Bool)
+    case publishCamera
     case publishScreenShare
     case unpublishScreenShare
     case setAudioInputDevice(String)
@@ -44,6 +45,12 @@ final class FakeLiveKitRoomMedia: LiveKitRoomMedia {
     func setCameraEnabled(_ isEnabled: Bool) async throws {
         try throwIfNeeded()
         calls.append(.setCameraEnabled(isEnabled))
+    }
+
+
+    func publishCamera(_ track: LiveKitLocalVideoTrack) async throws {
+        try throwIfNeeded()
+        calls.append(.publishCamera)
     }
 
 

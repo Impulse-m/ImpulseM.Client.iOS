@@ -13,6 +13,9 @@ public protocol LiveKitRoomMedia: AnyObject {
     /// Enables or disables the camera. Disabling mutes it; the publication stays in the room.
     func setCameraEnabled(_ isEnabled: Bool) async throws
 
+    /// Publishes the camera track the call capturer owns. A camera publication that already exists is replaced, so only one camera is published.
+    func publishCamera(_ track: LiveKitLocalVideoTrack) async throws
+
     /// Publishes the screen share track. Screen share audio is never published.
     func publishScreenShare(_ track: LiveKitLocalVideoTrack) async throws
 
