@@ -1,10 +1,12 @@
 import Foundation
 import SwiftSignalKit
-import TgVoipWebrtc
 import TelegramCore
 import Network
 import FFMpegBinding
 import ManagedFile
+
+#if !os(macOS)
+import TgVoipWebrtc
 
 @available(iOS 12.0, macOS 14.0, *)
 public final class WrappedMediaStreamingContext {
@@ -965,3 +967,4 @@ public final class SharedHLSServer {
         return disposable
     }
 }
+#endif

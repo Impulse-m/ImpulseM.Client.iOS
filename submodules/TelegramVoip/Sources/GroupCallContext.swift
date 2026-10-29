@@ -1,8 +1,11 @@
 import Foundation
 import SwiftSignalKit
-import TgVoipWebrtc
 import TelegramCore
 import CoreMedia
+
+#if !os(macOS)
+import TgVoipWebrtc
+#endif
 
 #if os(macOS)
 public class OngoingCallContext {
@@ -15,7 +18,7 @@ public func callLogsPath(account: Account) -> String {
 }
 #endif
 
-
+#if !os(macOS)
 final class ContextQueueImpl: NSObject, OngoingCallThreadLocalContextQueueWebrtc {
     private let queue: Queue
     
@@ -1364,3 +1367,4 @@ public final class OngoingGroupCallContext {
         }
     }
 }
+#endif
