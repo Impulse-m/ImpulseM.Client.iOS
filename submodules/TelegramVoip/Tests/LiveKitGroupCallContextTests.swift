@@ -1005,6 +1005,37 @@ final class LiveKitGroupCallContextTests: XCTestCase {
     }
 
 
+    func testPostedMuteCommandsApplyInOrderAndEndMuted() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        var reported: [Bool] = []
+        context.onMutedChanged = { (muted: Bool) -> Void in
+            reported.append(muted)
+        }
+        context.start()
+        let initialMuteApplied: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setMicrophoneEnabled(false))
+        }
+        XCTAssertTrue(initialMuteApplied)
+        let callsBeforePosts: Int = media.calls.count
+        context.post(.setMuted(true))
+        context.post(.setMuted(false))
+        context.post(.setMuted(true))
+        let applied: Bool = await waitUntil { () -> Bool in
+            return media.calls.count > callsBeforePosts
+        }
+        XCTAssertTrue(applied)
+        XCTAssertEqual(reported, [false, true])
+        XCTAssertTrue(context.isMuted)
+        XCTAssertEqual(media.calls.last, FakeLiveKitRoomMediaCall.setMicrophoneEnabled(false))
+        context.stop()
+    }
+
+
     func testMuteSetBeforeConnectAppliesOnConnect() async throws {
         let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
         let backend: FakeGroupBackend = FakeGroupBackend(

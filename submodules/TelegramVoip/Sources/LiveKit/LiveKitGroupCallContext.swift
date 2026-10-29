@@ -158,6 +158,48 @@ public typealias LiveKitGroupCheckFunction = (
 public typealias LiveKitGroupLeaveFunction = () async -> Void
 
 
+/// A call on the group call context, posted from any thread with `LiveKitGroupCallContext.post(_:)`. Each case names one isolated method of the context,
+/// with the same parameters, and the context runs the cases in the order they were posted.
+public enum LiveKitGroupCallCommand {
+    case setMuted(Bool)
+    case switchAudioInput(String)
+    case switchAudioOutput(String)
+    case updateParticipants([LiveKitGroupParticipant])
+    case setVolume(ssrc: UInt32, volume: Double)
+    case setRequestedVideoChannels([LiveKitGroupVideoRequest])
+    case disableCamera
+    case remoteVideoTrack(endpoint: String, completion: @MainActor (LiveKitGroupRemoteVideoTrack?) -> Void)
+}
+
+
+/// The FIFO of posted group call commands. It is locked, so commands can be appended from any thread.
+private final class LiveKitGroupCallCommandQueue: @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private var commands: [LiveKitGroupCallCommand] = []
+
+
+    func append(_ command: LiveKitGroupCallCommand) {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        commands.append(command)
+    }
+
+
+    /// Removes and returns every pending command, in the order they were posted.
+    func takeAll() -> [LiveKitGroupCallCommand] {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        let taken: [LiveKitGroupCallCommand] = commands
+        commands = []
+        return taken
+    }
+}
+
+
 /// The kind of a group room: the main camera connection or the screen presentation connection.
 enum LiveKitGroupRoomKind: Equatable {
     case main
@@ -257,6 +299,7 @@ public final class LiveKitGroupCallContext {
     private var audioLevelTask: Task<Void, Never>?
     private var audioInputId: String?
     private var audioOutputId: String?
+    private nonisolated let commandQueue: LiveKitGroupCallCommandQueue = LiveKitGroupCallCommandQueue()
 
 
     public convenience init(
@@ -490,6 +533,25 @@ public final class LiveKitGroupCallContext {
             endpointsByPeer[participant.peerKey] = endpoints
         }
         enqueueMediaOperation(applyVideoRequests)
+    }
+
+
+    /// Queues a call on the context, to run on the main actor in the order it was posted. Safe from any thread.
+    public nonisolated func post(_ command: LiveKitGroupCallCommand) {
+        commandQueue.append(command)
+        Task { @MainActor [weak self] in
+            self?.drainCommands()
+        }
+    }
+
+
+    /// Asks for the remote video track of the main room that belongs to the endpoint. The completion runs on the main actor with the answer,
+    /// which is nil while the track is not available. Safe from any thread.
+    public nonisolated func requestRemoteVideoTrack(
+        endpoint: String,
+        completion: @escaping @MainActor (LiveKitGroupRemoteVideoTrack?) -> Void
+    ) {
+        post(.remoteVideoTrack(endpoint: endpoint, completion: completion))
     }
 
 
@@ -934,6 +996,38 @@ public final class LiveKitGroupCallContext {
                     return
                 }
                 owner.tickAudioLevels()
+            }
+        }
+    }
+
+
+    /// Runs every pending command in the order it was posted. Each drain empties the whole queue, so a drain that runs after another one finds nothing left to do.
+    private func drainCommands() {
+        for command: LiveKitGroupCallCommand in commandQueue.takeAll() {
+            switch command {
+            case .setMuted(let muted):
+                setMuted(muted)
+
+            case .switchAudioInput(let deviceId):
+                switchAudioInput(deviceId)
+
+            case .switchAudioOutput(let deviceId):
+                switchAudioOutput(deviceId)
+
+            case .updateParticipants(let participants):
+                updateParticipants(participants)
+
+            case .setVolume(let ssrc, let volume):
+                setVolume(ssrc: ssrc, volume: volume)
+
+            case .setRequestedVideoChannels(let requests):
+                setRequestedVideoChannels(requests)
+
+            case .disableCamera:
+                disableCamera()
+
+            case .remoteVideoTrack(let endpoint, let completion):
+                completion(remoteVideoTrack(endpoint: endpoint))
             }
         }
     }
