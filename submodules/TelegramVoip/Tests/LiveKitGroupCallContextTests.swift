@@ -8,6 +8,8 @@ private let testGroupCallId: Int64 = 77
 private let testWaitAttempts: Int = 200
 private let testWaitStepNanoseconds: UInt64 = 10_000_000
 private let testPollIntervalSeconds: TimeInterval = 0.01
+private let testAudioLevel: Float = 0.4
+private let testAudioLevelIntervalSeconds: TimeInterval = 3600
 
 
 private enum FakeGroupFailure: Error {
@@ -279,10 +281,12 @@ private final class FakeGroupBackend: @unchecked Sendable {
 
 
 /// Hands out distinct, increasing sources, so each join carries new sources.
+/// The audio level timer waits an hour, so a test samples the levels only through `tickAudioLevels()`.
 @MainActor
 private func makeContext(
     backend: FakeGroupBackend,
-    pollIntervalSeconds: TimeInterval = testPollIntervalSeconds
+    pollIntervalSeconds: TimeInterval = testPollIntervalSeconds,
+    audioLevelClock: LiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
 ) -> LiveKitGroupCallContext {
     var lastSource: UInt32 = 100
     let nextSource: () -> UInt32 = { () -> UInt32 in
@@ -301,6 +305,9 @@ private func makeContext(
     let makeSession: LiveKitGroupRoomSessionFactory = { (sink: LiveKitGroupRoomEventSink) -> LiveKitGroupRoomSession in
         return backend.makeSession(sink: sink)
     }
+    let makeAudioMeter: () -> LiveKitAudioLevelMeter = { () -> LiveKitAudioLevelMeter in
+        return FakeLiveKitAudioLevelMeter(level: testAudioLevel)
+    }
     return LiveKitGroupCallContext(
         callId: testGroupCallId,
         joinRequest: joinRequest,
@@ -308,7 +315,10 @@ private func makeContext(
         leavePresentationRequest: leavePresentationRequest,
         pollIntervalSeconds: pollIntervalSeconds,
         nextSource: nextSource,
-        makeSession: makeSession
+        makeSession: makeSession,
+        audioLevelClock: audioLevelClock,
+        makeAudioMeter: makeAudioMeter,
+        audioLevelIntervalSeconds: testAudioLevelIntervalSeconds
     )
 }
 
@@ -1018,5 +1028,184 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         }
         XCTAssertTrue(ended)
         XCTAssertFalse(media.calls.contains(.publishCamera))
+    }
+
+
+    func testRemoteAudioTrackReportsItsSourceLevel() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let clock: FakeLiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
+        let context: LiveKitGroupCallContext = makeContext(backend: backend, audioLevelClock: clock)
+        var reported: [[(LiveKitGroupAudioLevelKey, Float, Bool)]] = []
+        context.onAudioLevels = { (entries: [(LiveKitGroupAudioLevelKey, Float, Bool)]) -> Void in
+            reported.append(entries)
+        }
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.7", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        XCTAssertEqual(track.attachedMeterIdentifiers.count, 1)
+        context.tickAudioLevels()
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertEqual(reported[0].map { (entry: (LiveKitGroupAudioLevelKey, Float, Bool)) -> LiveKitGroupAudioLevelKey in
+            return entry.0
+        }, [.source(7)])
+        XCTAssertEqual(reported[0][0].1, testAudioLevel, accuracy: 0.0001)
+        XCTAssertTrue(reported[0][0].2)
+        context.stop()
+    }
+
+
+    func testLocalMicrophoneLevelIsZeroWhileMuted() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let clock: FakeLiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
+        let context: LiveKitGroupCallContext = makeContext(backend: backend, audioLevelClock: clock)
+        var reported: [[(LiveKitGroupAudioLevelKey, Float, Bool)]] = []
+        context.onAudioLevels = { (entries: [(LiveKitGroupAudioLevelKey, Float, Bool)]) -> Void in
+            reported.append(entries)
+        }
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        XCTAssertTrue(context.isMuted)
+        let local: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u1.9", isLocal: true)
+        media.onAudioTrackAvailable?(local)
+        context.tickAudioLevels()
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertEqual(reported[0][0].0, .local)
+        XCTAssertEqual(reported[0][0].1, 0)
+        XCTAssertFalse(reported[0][0].2)
+
+        context.setMuted(false)
+        clock.milliseconds = 100
+        context.tickAudioLevels()
+        XCTAssertEqual(reported.count, 2)
+        XCTAssertEqual(reported[1][0].0, .local)
+        XCTAssertEqual(reported[1][0].1, testAudioLevel, accuracy: 0.0001)
+        XCTAssertTrue(reported[1][0].2)
+        context.stop()
+    }
+
+
+    func testRemovedAudioTrackIsDetachedAndNoLongerReported() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let clock: FakeLiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
+        let context: LiveKitGroupCallContext = makeContext(backend: backend, audioLevelClock: clock)
+        var reported: [[(LiveKitGroupAudioLevelKey, Float, Bool)]] = []
+        context.onAudioLevels = { (entries: [(LiveKitGroupAudioLevelKey, Float, Bool)]) -> Void in
+            reported.append(entries)
+        }
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.7", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        context.tickAudioLevels()
+        XCTAssertEqual(reported.last?.count, 1)
+
+        media.onAudioTrackRemoved?(track)
+        XCTAssertEqual(track.detachedMeterIdentifiers, track.attachedMeterIdentifiers)
+        clock.milliseconds = 100
+        context.tickAudioLevels()
+        XCTAssertEqual(reported.last?.count, 0)
+        context.stop()
+    }
+
+
+    func testUnidentifiedAudioTrackIsNotMetered() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "bogus", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        XCTAssertTrue(track.attachedMeterIdentifiers.isEmpty)
+        context.stop()
+    }
+
+
+    func testPresentationAudioTrackReportsItsSourceLevel() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")],
+            media: media
+        )
+        let clock: FakeLiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
+        let context: LiveKitGroupCallContext = makeContext(backend: backend, audioLevelClock: clock)
+        var reported: [[(LiveKitGroupAudioLevelKey, Float, Bool)]] = []
+        context.onAudioLevels = { (entries: [(LiveKitGroupAudioLevelKey, Float, Bool)]) -> Void in
+            reported.append(entries)
+        }
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
+        let presenting: Bool = await waitUntil { () -> Bool in
+            return context.isPresentationActive
+        }
+        XCTAssertTrue(presenting)
+        // The fake media is shared by both rooms, so the presentation room binds its callbacks last.
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.8.p", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        context.tickAudioLevels()
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertEqual(reported[0].map { (entry: (LiveKitGroupAudioLevelKey, Float, Bool)) -> LiveKitGroupAudioLevelKey in
+            return entry.0
+        }, [.source(8)])
+        context.stop()
+    }
+
+
+    func testEndedCallDetachesTracksAndReportsNoLevels() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let clock: FakeLiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
+        let context: LiveKitGroupCallContext = makeContext(backend: backend, audioLevelClock: clock)
+        var reported: [[(LiveKitGroupAudioLevelKey, Float, Bool)]] = []
+        context.onAudioLevels = { (entries: [(LiveKitGroupAudioLevelKey, Float, Bool)]) -> Void in
+            reported.append(entries)
+        }
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.7", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        context.stop()
+        XCTAssertEqual(track.detachedMeterIdentifiers, track.attachedMeterIdentifiers)
+        clock.milliseconds = 100
+        context.tickAudioLevels()
+        XCTAssertTrue(reported.isEmpty)
     }
 }

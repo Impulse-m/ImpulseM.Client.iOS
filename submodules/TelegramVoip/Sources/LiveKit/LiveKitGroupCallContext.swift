@@ -200,6 +200,9 @@ public final class LiveKitGroupCallContext {
     public private(set) var isMuted: Bool
     public var onMutedChanged: ((Bool) -> Void)?
     public private(set) var isNoiseSuppressionEnabled: Bool = AudioCaptureOptions.defaultNoiseSuppression
+    /// Receives the audio levels of the group rooms every 100 ms, as `(key, level, speaking)` entries. The local microphone comes first, then the sources.
+    /// The presentation room reports its own sources under their source keys.
+    public var onAudioLevels: (([(LiveKitGroupAudioLevelKey, Float, Bool)]) -> Void)?
 
     /// The video endpoints of the other participants, read from the participant list.
     public var remoteEndpoints: Set<String> {
@@ -234,6 +237,10 @@ public final class LiveKitGroupCallContext {
     private var presentationTrack: LiveKitLocalVideoTrack?
     private var cameraTrack: LiveKitLocalVideoTrack?
     private var mediaOperation: Task<Void, Never>?
+    private let mainAudioLevels: LiveKitGroupRoomAudioLevels
+    private let presentationAudioLevels: LiveKitGroupRoomAudioLevels
+    private let audioLevelIntervalSeconds: TimeInterval
+    private var audioLevelTask: Task<Void, Never>?
 
 
     public convenience init(
@@ -251,7 +258,10 @@ public final class LiveKitGroupCallContext {
             initialMuted: initialMuted,
             pollIntervalSeconds: LiveKitGroupCallContext.pollIntervalSeconds,
             nextSource: LiveKitGroupCallContext.randomSource,
-            makeSession: LiveKitGroupCallContext.makeSDKSession
+            makeSession: LiveKitGroupCallContext.makeSDKSession,
+            audioLevelClock: LiveKitSystemAudioLevelClock(),
+            makeAudioMeter: LiveKitGroupCallContext.makeGroupAudioMeter,
+            audioLevelIntervalSeconds: TimeInterval(LiveKitGroupAudioLevels.sampleIntervalMilliseconds) / 1000
         )
     }
 
@@ -264,7 +274,10 @@ public final class LiveKitGroupCallContext {
         initialMuted: Bool = true,
         pollIntervalSeconds: TimeInterval,
         nextSource: @escaping () -> UInt32,
-        makeSession: @escaping LiveKitGroupRoomSessionFactory
+        makeSession: @escaping LiveKitGroupRoomSessionFactory,
+        audioLevelClock: LiveKitAudioLevelClock,
+        makeAudioMeter: @escaping () -> LiveKitAudioLevelMeter,
+        audioLevelIntervalSeconds: TimeInterval
     ) {
         self.callId = callId
         self.joinRequest = joinRequest
@@ -274,6 +287,10 @@ public final class LiveKitGroupCallContext {
         self.pollIntervalSeconds = pollIntervalSeconds
         self.nextSource = nextSource
         self.makeSession = makeSession
+        self.mainAudioLevels = LiveKitGroupRoomAudioLevels(clock: audioLevelClock, makeMeter: makeAudioMeter)
+        self.presentationAudioLevels = LiveKitGroupRoomAudioLevels(clock: audioLevelClock, makeMeter: makeAudioMeter)
+        self.audioLevelIntervalSeconds = audioLevelIntervalSeconds
+        self.mainAudioLevels.setLocalMuted(initialMuted)
     }
 
 
@@ -321,6 +338,7 @@ public final class LiveKitGroupCallContext {
         presentationSession = nil
         presentationMedia = nil
         let leave: LiveKitGroupLeaveFunction = leavePresentationRequest
+        presentationAudioLevels.removeAll()
         setPresentationActive(false)
         Task { @MainActor in
             try? await media?.unpublishScreenShare()
@@ -358,6 +376,7 @@ public final class LiveKitGroupCallContext {
             return
         }
         isMuted = muted
+        mainAudioLevels.setLocalMuted(muted)
         onMutedChanged?(muted)
         enqueueMediaOperation(applyMicrophone)
     }
@@ -408,6 +427,28 @@ public final class LiveKitGroupCallContext {
             return
         }
         end(.disconnected)
+    }
+
+
+    /// Samples the audio levels of both rooms when the sample interval has passed, and reports them through `onAudioLevels`.
+    /// Both rooms are sampled on every tick, so their windows stay aligned.
+    func tickAudioLevels() {
+        guard !isEnded else {
+            return
+        }
+        let mainEntries: [(LiveKitGroupAudioLevelKey, Float, Bool)]? = mainAudioLevels.sample()
+        let presentationEntries: [(LiveKitGroupAudioLevelKey, Float, Bool)]? = presentationAudioLevels.sample()
+        guard mainEntries != nil || presentationEntries != nil else {
+            return
+        }
+        var entries: [(LiveKitGroupAudioLevelKey, Float, Bool)] = mainEntries ?? []
+        entries.append(contentsOf: presentationEntries ?? [])
+        onAudioLevels?(entries)
+    }
+
+
+    private nonisolated static func makeGroupAudioMeter() -> LiveKitAudioLevelMeter {
+        return LiveKitGroupAudioMeter()
     }
 
 
@@ -509,6 +550,7 @@ public final class LiveKitGroupCallContext {
         let previous: LiveKitRoomSession? = mainSession
         mainSession = nil
         mainMedia = nil
+        mainAudioLevels.removeAll()
         await previous?.disconnect()
         guard generation == mainGeneration, !isEnded else {
             return
@@ -521,6 +563,7 @@ public final class LiveKitGroupCallContext {
         let session: LiveKitGroupRoomSession = makeSession(sink)
         mainSession = session
         mainMedia = session.media
+        bindAudioTracks(media: session.media, kind: .main, generation: generation)
         do {
             try await session.connect(url: parameters.url, token: parameters.token)
         } catch {
@@ -538,6 +581,7 @@ public final class LiveKitGroupCallContext {
             setState(.connected)
         }
         startPolling()
+        startAudioLevelTimer()
         enqueueMediaOperation(applyMainAudio)
         enqueueMediaOperation(publishCurrentCamera)
     }
@@ -610,6 +654,7 @@ public final class LiveKitGroupCallContext {
         let previous: LiveKitRoomSession? = presentationSession
         presentationSession = nil
         presentationMedia = nil
+        presentationAudioLevels.removeAll()
         await previous?.disconnect()
         guard generation == presentationGeneration, presentationRequested, !isEnded else {
             return
@@ -622,6 +667,7 @@ public final class LiveKitGroupCallContext {
         let session: LiveKitGroupRoomSession = makeSession(sink)
         presentationSession = session
         presentationMedia = session.media
+        bindAudioTracks(media: session.media, kind: .presentation, generation: generation)
         do {
             try await session.connect(url: parameters.url, token: parameters.token)
         } catch {
@@ -710,6 +756,77 @@ public final class LiveKitGroupCallContext {
             end(.groupCallInvalid)
         } catch {
             // A transient failure keeps the call. The next check runs as usual.
+        }
+    }
+
+
+    /// Routes the audio track events of one room to its levels. An event from a room that has been replaced or left is ignored.
+    private func bindAudioTracks(
+        media: LiveKitRoomMedia?,
+        kind: LiveKitGroupRoomKind,
+        generation: Int
+    ) {
+        guard let media: LiveKitRoomMedia = media else {
+            return
+        }
+        media.onAudioTrackAvailable = { [weak self] (handle: LiveKitAudioTrackHandle) -> Void in
+            self?.audioTrackDidAppear(handle, kind: kind, generation: generation)
+        }
+        media.onAudioTrackRemoved = { [weak self] (handle: LiveKitAudioTrackHandle) -> Void in
+            self?.audioTrackDidGoAway(handle, kind: kind, generation: generation)
+        }
+    }
+
+
+    private func audioTrackDidAppear(
+        _ handle: LiveKitAudioTrackHandle,
+        kind: LiveKitGroupRoomKind,
+        generation: Int
+    ) {
+        guard isCurrentRoom(kind: kind, identifier: generation) else {
+            return
+        }
+        audioLevels(kind: kind).trackDidAppear(handle)
+    }
+
+
+    private func audioTrackDidGoAway(
+        _ handle: LiveKitAudioTrackHandle,
+        kind: LiveKitGroupRoomKind,
+        generation: Int
+    ) {
+        guard isCurrentRoom(kind: kind, identifier: generation) else {
+            return
+        }
+        audioLevels(kind: kind).trackDidGoAway(handle)
+    }
+
+
+    private func audioLevels(kind: LiveKitGroupRoomKind) -> LiveKitGroupRoomAudioLevels {
+        switch kind {
+        case .main:
+            return mainAudioLevels
+
+        case .presentation:
+            return presentationAudioLevels
+        }
+    }
+
+
+    private func startAudioLevelTimer() {
+        guard audioLevelTask == nil else {
+            return
+        }
+        let seconds: TimeInterval = audioLevelIntervalSeconds
+        audioLevelTask = Task { @MainActor [weak self] in
+            // As the poll loop, the context is held only while a tick runs, so a context that is no longer referenced stops ticking.
+            while true {
+                try? await Task.sleep(nanoseconds: LiveKitGroupCallContext.nanoseconds(from: seconds))
+                guard !Task.isCancelled, let owner: LiveKitGroupCallContext = self, !owner.isEnded else {
+                    return
+                }
+                owner.tickAudioLevels()
+            }
         }
     }
 
@@ -819,6 +936,8 @@ public final class LiveKitGroupCallContext {
         presentationSession = nil
         mainMedia = nil
         presentationMedia = nil
+        mainAudioLevels.removeAll()
+        presentationAudioLevels.removeAll()
         presentationRequested = false
         presentationTrack = nil
         cameraTrack = nil
@@ -827,6 +946,7 @@ public final class LiveKitGroupCallContext {
         mainJoinTask?.cancel()
         presentationJoinTask?.cancel()
         pollTask?.cancel()
+        audioLevelTask?.cancel()
         setPresentationActive(false)
         Task { @MainActor in
             if wasPresenting {
@@ -872,5 +992,107 @@ private final class LiveKitGroupRoomSink: LiveKitGroupRoomEventSink {
 
     func roomDidDisconnectUnexpectedly() {
         owner?.roomDidDisconnect(kind: kind, identifier: identifier)
+    }
+}
+
+
+/// The level meters of the audio tracks of one group room. Each audio track that appears gets one meter, keyed by the local microphone
+/// or by the source of its participant identity. A track that goes away has its meter detached and removed.
+@MainActor
+final class LiveKitGroupRoomAudioLevels {
+    private struct Attachment {
+        let handle: LiveKitAudioTrackHandle
+        let key: LiveKitGroupAudioLevelKey
+        let meter: LiveKitAudioLevelMeter
+    }
+
+
+    private let levels: LiveKitGroupAudioLevels
+    private let makeMeter: () -> LiveKitAudioLevelMeter
+    private var attachments: [ObjectIdentifier: Attachment] = [:]
+
+
+    init(
+        clock: LiveKitAudioLevelClock,
+        makeMeter: @escaping () -> LiveKitAudioLevelMeter
+    ) {
+        self.levels = LiveKitGroupAudioLevels(clock: clock)
+        self.makeMeter = makeMeter
+    }
+
+
+    /// Sets whether the local microphone is muted. A muted local track reports 0 and not speaking.
+    func setLocalMuted(_ isMuted: Bool) {
+        levels.setLocalMuted(isMuted)
+    }
+
+
+    /// Attaches a meter to a track that appeared. A track without a usable identity is not metered.
+    /// A track whose key is already metered replaces the earlier track.
+    func trackDidAppear(_ handle: LiveKitAudioTrackHandle) {
+        let identifier: ObjectIdentifier = ObjectIdentifier(handle)
+        guard attachments[identifier] == nil else {
+            return
+        }
+        guard let key: LiveKitGroupAudioLevelKey = LiveKitGroupRoomAudioLevels.levelKey(for: handle) else {
+            return
+        }
+        let replaced: [ObjectIdentifier] = attachments.filter { (entry: (key: ObjectIdentifier, value: Attachment)) -> Bool in
+            return entry.value.key == key
+        }.map { (entry: (key: ObjectIdentifier, value: Attachment)) -> ObjectIdentifier in
+            return entry.key
+        }
+        for replacedIdentifier: ObjectIdentifier in replaced {
+            detach(identifier: replacedIdentifier)
+        }
+        let meter: LiveKitAudioLevelMeter = makeMeter()
+        levels.addMeter(key: key, meter: meter)
+        handle.attachMeter(meter)
+        attachments[identifier] = Attachment(
+            handle: handle,
+            key: key,
+            meter: meter
+        )
+    }
+
+
+    /// Detaches and removes the meter of a track that went away.
+    func trackDidGoAway(_ handle: LiveKitAudioTrackHandle) {
+        detach(identifier: ObjectIdentifier(handle))
+    }
+
+
+    /// Detaches and removes every meter. Used when the room is replaced or left.
+    func removeAll() {
+        let identifiers: [ObjectIdentifier] = Array(attachments.keys)
+        for identifier: ObjectIdentifier in identifiers {
+            detach(identifier: identifier)
+        }
+    }
+
+
+    /// Returns one entry per metered track when the sample interval has passed, and nil otherwise.
+    func sample() -> [(LiveKitGroupAudioLevelKey, Float, Bool)]? {
+        return levels.sampleIfDue()
+    }
+
+
+    private func detach(identifier: ObjectIdentifier) {
+        guard let attachment: Attachment = attachments.removeValue(forKey: identifier) else {
+            return
+        }
+        attachment.handle.detachMeter(attachment.meter)
+        levels.removeMeter(key: attachment.key)
+    }
+
+
+    private static func levelKey(for handle: LiveKitAudioTrackHandle) -> LiveKitGroupAudioLevelKey? {
+        if handle.isLocal {
+            return .local
+        }
+        guard let identity: LiveKitGroupIdentity = try? LiveKitGroupIdentity.parse(identity: handle.participantIdentity) else {
+            return nil
+        }
+        return .source(identity.source)
     }
 }
