@@ -290,7 +290,13 @@ public struct ImpulseMapping: Sendable {
         let resourceName: String = "tl-proto-232"
         let resourceExtension: String = "json"
 
-        if let nested: URL = Bundle.module.url(
+        #if SWIFT_PACKAGE
+        let resourceBundle: Bundle = Bundle.module
+        #else
+        let resourceBundle: Bundle = Bundle(for: ImpulseMappingBundleAnchor.self)
+        #endif
+
+        if let nested: URL = resourceBundle.url(
             forResource: resourceName,
             withExtension: resourceExtension,
             subdirectory: "Resources"
@@ -298,7 +304,7 @@ public struct ImpulseMapping: Sendable {
             return nested
         }
 
-        if let flat: URL = Bundle.module.url(
+        if let flat: URL = resourceBundle.url(
             forResource: resourceName,
             withExtension: resourceExtension
         ) {
@@ -554,3 +560,9 @@ fileprivate struct RawType: Decodable {
     let polymorphic: Bool?
     let arms: [String: UInt32]?
 }
+
+
+#if !SWIFT_PACKAGE
+fileprivate final class ImpulseMappingBundleAnchor {
+}
+#endif
