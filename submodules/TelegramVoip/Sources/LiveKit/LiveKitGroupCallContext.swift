@@ -339,6 +339,7 @@ public final class LiveKitGroupCallContext {
 
 
     /// Stops the screen presentation: unpublishes the track, leaves it on the server and disconnects its room.
+    /// `onPresentationStateChanged` reports the stop, also when the presentation was refused or failed before it became active.
     public func stopPresentation() {
         guard presentationRequested else {
             return
@@ -355,7 +356,11 @@ public final class LiveKitGroupCallContext {
         presentationMedia = nil
         let leave: LiveKitGroupLeaveFunction = leavePresentationRequest
         presentationAudioLevels.removeAll()
+        let wasActive: Bool = isPresentationActive
         setPresentationActive(false)
+        if !wasActive {
+            onPresentationStateChanged?(false)
+        }
         Task { @MainActor in
             try? await media?.unpublishScreenShare()
             await leave()
