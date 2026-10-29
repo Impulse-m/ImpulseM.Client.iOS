@@ -12,6 +12,9 @@ private let liveInstallCheckPasswordHex: String = liveInstallAuthorizationHex
 private let liveInstallLoginTokenSuccessHex: String = "1a100a0e" + liveInstallAuthorizationHex
 /// An authorization with no token: the reply carries no session, so nothing is installed.
 private let liveInstallTokenlessHex: String = "0a062a040a020803"
+/// The reply of `auth.resetAuthorizations`: `boolTrue`. Once the queued replies are used up the carrier answers with the
+/// cancelled code, and a cancelled call never completes, so a test whose call must complete queues a reply for it.
+private let liveInstallBoolTrueHex: String = "b5757299"
 /// The cancelled code of the SDK, which the carrier answers with once its queued replies are used up.
 private let liveInstallCancelledCode: Int = 17
 
@@ -382,7 +385,10 @@ final class ImpulseSessionInstallTests: XCTestCase {
     /// token, and only after that the call goes out.
     func testSessionCallWaitsForTheInstallAndIsSentAfterTheRekey() async throws {
         let fixture: LiveInstallFixture = try makeLiveInstallFixture(
-            replies: [.success(try liveInstallBytes(hex: liveInstallLoginTokenSuccessHex))]
+            replies: [
+                .success(try liveInstallBytes(hex: liveInstallLoginTokenSuccessHex)),
+                .success(try liveInstallBytes(hex: liveInstallBoolTrueHex)),
+            ]
         )
         let resetTl: [UInt8] = try liveInstallMethodTl(mapping: fixture.mapping, name: "auth.resetAuthorizations")
         let loginTl: [UInt8] = try liveInstallMethodTl(mapping: fixture.mapping, name: "auth.importLoginToken")
