@@ -6892,8 +6892,11 @@ private final class ChatListLocationContext {
         
         let hasProxy = context.sharedContext.accountManager.sharedData(keys: [SharedDataKeys.proxySettings])
         |> map { sharedData -> (Bool, Bool) in
-            if let settings = sharedData.entries[SharedDataKeys.proxySettings]?.get(ProxySettings.self) {
-                return (!settings.servers.isEmpty, settings.enabled)
+            if let state = sharedData.entries[SharedDataKeys.proxySettings]?.get(ImpulseProxyState.self) {
+                let hasServers: Bool = !state.manual.isEmpty || state.subscriptions.contains(where: { subscription -> Bool in
+                    return !subscription.servers.isEmpty
+                })
+                return (hasServers, state.enabled && state.useForTransport)
             } else {
                 return (false, false)
             }
