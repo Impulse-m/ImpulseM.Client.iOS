@@ -136,7 +136,8 @@ public final class ImpulsePoolCarrier {
     /// The endpoint key the pool resolves. The pool has one endpoint, so the key is fixed.
     public static let endpointKey: String = "impulse-pool"
 
-    /// The name the connections and the main client report to the server.
+    /// The name the connections and the main client report to the server when the carrier is not given one. The macOS
+    /// app keeps this value; other apps pass their own name to `init`.
     public static let clientName: String = "impulsem-desktop"
 
     /// The deadline of a pool call, in seconds. A call asks for at most this.
@@ -170,17 +171,20 @@ public final class ImpulsePoolCarrier {
 
 
     /// Creates a carrier with its own main client and pool on the endpoint. The main client is created with
-    /// `mainConfig`, or with `makeMainConfig()` when none is given.
+    /// `mainConfig`, or with `makeMainConfig(clientName:)` when none is given. The connections and the main client report
+    /// `clientName` to the server.
     /// - Throws: `CentrifugeError.configurationError` when the pool options cannot work.
     public convenience init(
         endpoint: String,
         identityRenewal: @escaping ImpulsePoolIdentityRenewal,
-        mainConfig: CentrifugeClientConfig? = nil
+        mainConfig: CentrifugeClientConfig? = nil,
+        clientName: String = ImpulsePoolCarrier.clientName
     ) throws {
         try self.init(
             endpoint: endpoint,
             identityRenewal: identityRenewal,
             mainConfig: mainConfig,
+            clientName: clientName,
             makeMainClient: ImpulsePoolCarrier.createMainClient
         )
     }
@@ -190,14 +194,15 @@ public final class ImpulsePoolCarrier {
         endpoint: String,
         identityRenewal: @escaping ImpulsePoolIdentityRenewal,
         mainConfig: CentrifugeClientConfig?,
+        clientName: String = ImpulsePoolCarrier.clientName,
         makeMainClient: ImpulsePoolMainClientFactory
     ) throws {
         let delegate: ImpulsePoolMainDelegate = ImpulsePoolMainDelegate()
-        let config: CentrifugeClientConfig = mainConfig ?? ImpulsePoolCarrier.makeMainConfig()
+        let config: CentrifugeClientConfig = mainConfig ?? ImpulsePoolCarrier.makeMainConfig(clientName: clientName)
         let main: CentrifugeClient = try makeMainClient(endpoint, config, delegate)
         let pool: CentrifugeRpcPool = try CentrifugeRpcPool.create(
             main: main,
-            options: ImpulsePoolCarrier.makePoolOptions(endpoint: endpoint)
+            options: ImpulsePoolCarrier.makePoolOptions(endpoint: endpoint, clientName: clientName)
         )
         self.main = main
         self.transport = pool
@@ -331,11 +336,14 @@ public final class ImpulsePoolCarrier {
 
 
     /// The configuration of the main client when none is injected: the socket policy (reconnect backoff from 1 to 30 seconds,
-    /// the ping watchdog) under the pool's client name, with no token. The native socket connects through the route of
+    /// the ping watchdog) under `clientName`, with no token. The native socket connects through the route of
     /// `routeSource`, or directly when there is none.
-    internal static func makeMainConfig(routeSource: ImpulseProxyRouteSource? = nil) -> CentrifugeClientConfig {
+    internal static func makeMainConfig(
+        routeSource: ImpulseProxyRouteSource? = nil,
+        clientName: String = ImpulsePoolCarrier.clientName
+    ) -> CentrifugeClientConfig {
         var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "", routeSource: routeSource)
-        config.name = ImpulsePoolCarrier.clientName
+        config.name = clientName
         return config
     }
 
@@ -354,13 +362,16 @@ public final class ImpulsePoolCarrier {
 
 
     /// The pool options: one connection, one call in flight on it, a bounded line, no token of any kind.
-    internal static func makePoolOptions(endpoint: String) -> CentrifugeRpcPoolOptions {
+    internal static func makePoolOptions(
+        endpoint: String,
+        clientName: String = ImpulsePoolCarrier.clientName
+    ) -> CentrifugeRpcPoolOptions {
         let endpoints: (String) -> [String] = { (key: String) -> [String] in
             return [endpoint]
         }
         return CentrifugeRpcPoolOptions(
             endpoints: endpoints,
-            name: ImpulsePoolCarrier.clientName,
+            name: clientName,
             timeout: ImpulsePoolCarrier.callTimeoutSeconds,
             maxConnectionsPerEndpoint: ImpulsePoolCarrier.maxConnectionsPerEndpoint,
             maxInflightPerConnection: ImpulsePoolCarrier.maxInflightPerConnection,
