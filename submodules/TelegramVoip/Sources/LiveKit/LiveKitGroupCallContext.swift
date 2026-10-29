@@ -170,6 +170,9 @@ enum LiveKitGroupRoomKind: Equatable {
 protocol LiveKitGroupRoomEventSink: AnyObject {
     func roomDidFailToConnect()
     func roomDidDisconnectUnexpectedly()
+
+    /// A track of the room was subscribed or unsubscribed, so the remote video of the room may have changed.
+    func roomRemoteTracksDidChange()
 }
 
 
@@ -206,6 +209,10 @@ public final class LiveKitGroupCallContext {
     /// Receives the audio levels of the group rooms every 100 ms, as `(key, level, speaking)` entries. The local microphone comes first, then the sources.
     /// The presentation room reports its own sources under their source keys.
     public var onAudioLevels: (([(LiveKitGroupAudioLevelKey, Float, Bool)]) -> Void)?
+
+    /// Called on the main actor when a track of the main room is subscribed or unsubscribed, and when the call ends.
+    /// A remote video view looks its track up again through `remoteVideoTrack(endpoint:)` when this fires.
+    public var onRemoteTracksChanged: (() -> Void)?
 
     /// The video endpoints of the other participants, read from the participant list.
     public var remoteEndpoints: Set<String> {
@@ -456,6 +463,19 @@ public final class LiveKitGroupCallContext {
     }
 
 
+    /// The remote video track of the main room that belongs to the endpoint. A presentation endpoint (ending in `.p`) is matched as it is.
+    /// Returns nil while the main room is not joined, when no participant owns the endpoint, or when that participant has no track yet.
+    public func remoteVideoTrack(endpoint: String) -> LiveKitGroupRemoteVideoTrack? {
+        guard let session: LiveKitGroupRoomSession = mainSession else {
+            return nil
+        }
+        let remoteVideo: LiveKitGroupRemoteVideo = LiveKitGroupRemoteVideo(remoteParticipants: { () -> [LiveKitGroupRemoteParticipant] in
+            return session.remoteParticipants
+        })
+        return remoteVideo.videoTrack(endpoint: endpoint)
+    }
+
+
     /// Reads the video endpoints of the other participants from a server participant update.
     /// A participant with no endpoint clears its earlier endpoints, so a participant that left is sent with no endpoints.
     public func updateParticipants(_ participants: [LiveKitGroupParticipant]) {
@@ -492,6 +512,18 @@ public final class LiveKitGroupCallContext {
             return
         }
         end(.disconnected)
+    }
+
+
+    /// Reports a subscription change of a room. Only the main room carries the remote video of the call, so the presentation room is ignored.
+    func roomRemoteTracksDidChange(
+        kind: LiveKitGroupRoomKind,
+        identifier: Int
+    ) {
+        guard kind == .main, isCurrentRoom(kind: kind, identifier: identifier) else {
+            return
+        }
+        onRemoteTracksChanged?()
     }
 
 
@@ -1064,6 +1096,7 @@ public final class LiveKitGroupCallContext {
             await main?.disconnect()
         }
         setState(.ended(reason))
+        onRemoteTracksChanged?()
     }
 
 
@@ -1100,6 +1133,11 @@ private final class LiveKitGroupRoomSink: LiveKitGroupRoomEventSink {
 
     func roomDidDisconnectUnexpectedly() {
         owner?.roomDidDisconnect(kind: kind, identifier: identifier)
+    }
+
+
+    func roomRemoteTracksDidChange() {
+        owner?.roomRemoteTracksDidChange(kind: kind, identifier: identifier)
     }
 }
 

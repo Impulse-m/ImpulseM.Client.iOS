@@ -54,6 +54,7 @@ private final class LiveKitGroupRoomDelegateBridge: NSObject, RoomDelegate, @unc
 
 
     func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
+        notifyRemoteTracksDidChange()
         guard publication.kind == .audio, let track: RemoteAudioTrack = publication.track as? RemoteAudioTrack else {
             return
         }
@@ -65,6 +66,7 @@ private final class LiveKitGroupRoomDelegateBridge: NSObject, RoomDelegate, @unc
 
 
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
+        notifyRemoteTracksDidChange()
         guard publication.kind == .audio else {
             return
         }
@@ -74,10 +76,20 @@ private final class LiveKitGroupRoomDelegateBridge: NSObject, RoomDelegate, @unc
 
     @objc(room:remoteParticipant:didUnpublishTrack:)
     func room(_ room: Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) {
+        notifyRemoteTracksDidChange()
         guard publication.kind == .audio else {
             return
         }
         audioTracks.trackDidGoAway(key: publication.sid.stringValue)
+    }
+
+
+    /// Tells the sink that a remote track changed, so the remote video views look their track up again.
+    private func notifyRemoteTracksDidChange() {
+        let target: LiveKitGroupRoomEventSink = sink
+        Task { @MainActor in
+            target.roomRemoteTracksDidChange()
+        }
     }
 }
 

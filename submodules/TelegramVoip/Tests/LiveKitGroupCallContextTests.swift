@@ -1,4 +1,5 @@
 import XCTest
+import LiveKit
 @testable import TelegramVoip
 
 
@@ -53,11 +54,24 @@ private func joinParams(room: String) -> String {
 }
 
 
+/// A remote video track that has no SDK track behind it. Its identity is the only thing the tests compare.
+private final class FakeGroupRemoteVideoTrack: LiveKitGroupRemoteVideoTrack {
+    var sdkTrack: RemoteVideoTrack? {
+        return nil
+    }
+}
+
+
 /// A remote video publication of a fake participant. It records the enable flags and the qualities it receives.
 private final class FakeGroupRemotePublication: LiveKitGroupRemotePublication, @unchecked Sendable {
-    let videoTrack: LiveKitGroupRemoteVideoTrack? = nil
+    let videoTrack: LiveKitGroupRemoteVideoTrack?
     private(set) var enabledCalls: [Bool] = []
     private(set) var qualityCalls: [LiveKitGroupVideoQuality] = []
+
+
+    init(videoTrack: LiveKitGroupRemoteVideoTrack? = nil) {
+        self.videoTrack = videoTrack
+    }
 
 
     func setEnabled(_ isEnabled: Bool) async throws {
@@ -1481,6 +1495,42 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         XCTAssertEqual(unrequested.enabledCalls, [false, false])
         XCTAssertTrue(unrequested.qualityCalls.isEmpty)
         context.stop()
+    }
+
+
+    func testRemoteVideoTrackResolvesEndpointAndFollowsRoomChanges() async throws {
+        let presentationTrack: FakeGroupRemoteVideoTrack = FakeGroupRemoteVideoTrack()
+        let cameraTrack: FakeGroupRemoteVideoTrack = FakeGroupRemoteVideoTrack()
+        let remoteParticipants: [LiveKitGroupRemoteParticipant] = [
+            FakeGroupRemoteParticipant(identity: "u2.8.p", videoPublications: [FakeGroupRemotePublication(videoTrack: presentationTrack)]),
+            FakeGroupRemoteParticipant(identity: "u4.7", videoPublications: [FakeGroupRemotePublication(videoTrack: cameraTrack)]),
+            FakeGroupRemoteParticipant(identity: "u3.5", videoPublications: [FakeGroupRemotePublication()]),
+        ]
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            remoteParticipants: remoteParticipants
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        var changes: Int = 0
+        context.onRemoteTracksChanged = { () -> Void in
+            changes += 1
+        }
+        XCTAssertNil(context.remoteVideoTrack(endpoint: "u2.8.p"))
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        XCTAssertTrue(context.remoteVideoTrack(endpoint: "u2.8.p") === presentationTrack)
+        XCTAssertTrue(context.remoteVideoTrack(endpoint: "u4.7") === cameraTrack)
+        XCTAssertNil(context.remoteVideoTrack(endpoint: "u3.5"))
+        XCTAssertNil(context.remoteVideoTrack(endpoint: "u9.1"))
+        backend.sinks[0].roomRemoteTracksDidChange()
+        XCTAssertEqual(changes, 1)
+        context.stop()
+        XCTAssertNil(context.remoteVideoTrack(endpoint: "u2.8.p"))
+        XCTAssertNil(context.remoteVideoTrack(endpoint: "u4.7"))
+        XCTAssertEqual(changes, 2)
     }
 
 
