@@ -256,7 +256,7 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
             keychainAccessGroup: self.testGroup,
             identityClock: ImpulseFactoryClock(),
             identityScheduler: ImpulseFactoryScheduler(),
-            declaration: ImpulseNetworkEngineFactory.makeDeclaration(),
+            declaration: ImpulseNetworkEngineFactory.makeDeclaration(environment: impulseMakeContext().apiEnvironment),
             updateBridge: ImpulseUpdateBridge(context: impulseMakeContext()),
             routeSource: nil
         )
