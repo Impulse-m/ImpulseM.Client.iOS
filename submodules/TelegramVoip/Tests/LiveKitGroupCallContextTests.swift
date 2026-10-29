@@ -53,6 +53,40 @@ private func joinParams(room: String) -> String {
 }
 
 
+/// A remote video publication of a fake participant. It records the enable flags and the qualities it receives.
+private final class FakeGroupRemotePublication: LiveKitGroupRemotePublication, @unchecked Sendable {
+    let videoTrack: LiveKitGroupRemoteVideoTrack? = nil
+    private(set) var enabledCalls: [Bool] = []
+    private(set) var qualityCalls: [LiveKitGroupVideoQuality] = []
+
+
+    func setEnabled(_ isEnabled: Bool) async throws {
+        enabledCalls.append(isEnabled)
+    }
+
+
+    func setVideoQuality(_ quality: LiveKitGroupVideoQuality) async throws {
+        qualityCalls.append(quality)
+    }
+}
+
+
+/// A remote participant of a fake room with a fixed identity and fixed video publications.
+private final class FakeGroupRemoteParticipant: LiveKitGroupRemoteParticipant {
+    let identity: String?
+    let videoPublications: [LiveKitGroupRemotePublication]
+
+
+    init(
+        identity: String?,
+        videoPublications: [LiveKitGroupRemotePublication]
+    ) {
+        self.identity = identity
+        self.videoPublications = videoPublications
+    }
+}
+
+
 /// A finite fake room session. It records the join parameters and the disconnects, and fails to connect when told to.
 private final class FakeGroupRoomSession: LiveKitGroupRoomSession, @unchecked Sendable {
     var media: LiveKitRoomMedia? {
@@ -60,6 +94,7 @@ private final class FakeGroupRoomSession: LiveKitGroupRoomSession, @unchecked Se
     }
 
 
+    let remoteParticipants: [LiveKitGroupRemoteParticipant]
     private let lock: NSLock = NSLock()
     private let connectSucceeds: Bool
     private let fakeMedia: LiveKitRoomMedia?
@@ -70,10 +105,12 @@ private final class FakeGroupRoomSession: LiveKitGroupRoomSession, @unchecked Se
 
     init(
         connectSucceeds: Bool,
-        media: LiveKitRoomMedia?
+        media: LiveKitRoomMedia?,
+        remoteParticipants: [LiveKitGroupRemoteParticipant]
     ) {
         self.connectSucceeds = connectSucceeds
         self.fakeMedia = media
+        self.remoteParticipants = remoteParticipants
     }
 
 
@@ -141,6 +178,7 @@ private final class FakeGroupBackend: @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private let connectSucceeds: Bool
     private let media: LiveKitRoomMedia?
+    private let remoteParticipants: [LiveKitGroupRemoteParticipant]
     private var joinOutcomes: [FakeJoinOutcome]
     private var checkOutcomes: [FakeCheckOutcome]
     private var recordedJoins: [(payload: String, isPresentation: Bool)] = []
@@ -154,12 +192,14 @@ private final class FakeGroupBackend: @unchecked Sendable {
         joinOutcomes: [FakeJoinOutcome],
         checkOutcomes: [FakeCheckOutcome] = [],
         connectSucceeds: Bool = true,
-        media: LiveKitRoomMedia? = nil
+        media: LiveKitRoomMedia? = nil,
+        remoteParticipants: [LiveKitGroupRemoteParticipant] = []
     ) {
         self.joinOutcomes = joinOutcomes
         self.checkOutcomes = checkOutcomes
         self.connectSucceeds = connectSucceeds
         self.media = media
+        self.remoteParticipants = remoteParticipants
     }
 
 
@@ -251,7 +291,8 @@ private final class FakeGroupBackend: @unchecked Sendable {
         return read { () -> LiveKitGroupRoomSession in
             let session: FakeGroupRoomSession = FakeGroupRoomSession(
                 connectSucceeds: connectSucceeds,
-                media: media
+                media: media,
+                remoteParticipants: remoteParticipants
             )
             recordedSessions.append(session)
             recordedSinks.append(sink)
@@ -1298,6 +1339,147 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         XCTAssertEqual(reported[0].map { (entry: (LiveKitGroupAudioLevelKey, Float, Bool)) -> LiveKitGroupAudioLevelKey in
             return entry.0
         }, [.source(8)])
+        context.stop()
+    }
+
+
+    func testZeroVolumeMutesTheRemoteTrackOfItsSource() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.7", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        context.setVolume(ssrc: 7, volume: 0)
+        XCTAssertEqual(track.playbackVolumes, [0])
+        context.stop()
+    }
+
+
+    func testVolumeSetBeforeTheTrackAppearsIsAppliedWhenItAppears() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.setVolume(ssrc: 7, volume: 0.5)
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.7", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        XCTAssertEqual(track.playbackVolumes, [0.5])
+        context.stop()
+    }
+
+
+    func testVolumeOfOtherSourceAndLocalMicrophoneAreNotChanged() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let other: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.8", isLocal: false)
+        let local: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u1.9", isLocal: true)
+        media.onAudioTrackAvailable?(other)
+        media.onAudioTrackAvailable?(local)
+        context.setVolume(ssrc: 7, volume: 0)
+        XCTAssertTrue(other.playbackVolumes.isEmpty)
+        XCTAssertTrue(local.playbackVolumes.isEmpty)
+        context.stop()
+    }
+
+
+    func testVolumeIsClampedToTheLiveKitRange() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let track: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u2.7", isLocal: false)
+        media.onAudioTrackAvailable?(track)
+        context.setVolume(ssrc: 7, volume: 25)
+        XCTAssertEqual(track.playbackVolumes, [10])
+        context.stop()
+    }
+
+
+    func testRemovedParticipantClearsItsEndpoints() {
+        let backend: FakeGroupBackend = FakeGroupBackend(joinOutcomes: [])
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.updateParticipants(testParticipants)
+        XCTAssertEqual(context.remoteEndpoints, ["u2.7", "u2.8.p"])
+        context.updateParticipants([
+            LiveKitGroupParticipant(
+                peerKey: "u2",
+                isSelf: false,
+                videoEndpoint: nil,
+                presentationEndpoint: nil
+            ),
+        ])
+        XCTAssertTrue(context.remoteEndpoints.isEmpty)
+    }
+
+
+    func testRequestedChannelIsEnabledAndUnrequestedPublicationIsDisabled() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let requested: FakeGroupRemotePublication = FakeGroupRemotePublication()
+        let unrequested: FakeGroupRemotePublication = FakeGroupRemotePublication()
+        let remoteParticipants: [LiveKitGroupRemoteParticipant] = [
+            FakeGroupRemoteParticipant(identity: "u2.7", videoPublications: [requested]),
+            FakeGroupRemoteParticipant(identity: "u3.5", videoPublications: [unrequested]),
+        ]
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media,
+            remoteParticipants: remoteParticipants
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let disabledOnConnect: Bool = await waitUntil { () -> Bool in
+            return unrequested.enabledCalls == [false]
+        }
+        XCTAssertTrue(disabledOnConnect)
+        context.setRequestedVideoChannels([
+            LiveKitGroupVideoRequest(
+                endpoint: "u2.7",
+                quality: .medium,
+                isVisible: true
+            ),
+        ])
+        let applied: Bool = await waitUntil { () -> Bool in
+            return requested.qualityCalls == [.medium] && unrequested.enabledCalls == [false, false]
+        }
+        XCTAssertTrue(applied)
+        XCTAssertEqual(requested.enabledCalls, [false, true])
+        XCTAssertEqual(unrequested.enabledCalls, [false, false])
+        XCTAssertTrue(unrequested.qualityCalls.isEmpty)
         context.stop()
     }
 

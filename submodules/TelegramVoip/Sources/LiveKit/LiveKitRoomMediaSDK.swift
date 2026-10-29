@@ -39,17 +39,20 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
     private let localParticipant: LocalParticipant
     private let isGroupCall: Bool
     private let audioTracks: LiveKitAudioTrackHub
+    private let prioritizeVP8: Bool
     private var isNoiseSuppressionEnabled: Bool = AudioCaptureOptions.defaultNoiseSuppression
 
 
     init(
         localParticipant: LocalParticipant,
         isGroupCall: Bool,
-        audioTracks: LiveKitAudioTrackHub = LiveKitAudioTrackHub()
+        audioTracks: LiveKitAudioTrackHub = LiveKitAudioTrackHub(),
+        prioritizeVP8: Bool = false
     ) {
         self.localParticipant = localParticipant
         self.isGroupCall = isGroupCall
         self.audioTracks = audioTracks
+        self.prioritizeVP8 = prioritizeVP8
     }
 
 
@@ -75,7 +78,7 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
 
 
     func setCameraEnabled(_ isEnabled: Bool) async throws {
-        let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: isGroupCall)
+        let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: isGroupCall, prioritizeVP8: prioritizeVP8)
         // The camera simulcast rule does not depend on the camera side, so the back code stands for any camera.
         // The SDK mutes or unmutes an existing camera publication and publishes a new one only when none exists.
         try await localParticipant.setCamera(enabled: isEnabled, publishOptions: publishOptions)
@@ -86,7 +89,7 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
         guard let sdkTrack: LocalVideoTrack = track.sdkTrack else {
             throw LiveKitRoomMediaError.trackHasNoSdkTrack
         }
-        let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: isGroupCall)
+        let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: isGroupCall, prioritizeVP8: prioritizeVP8)
         let cameraPublications: [LocalTrackPublication] = localParticipant.localVideoTracks.filter { (publication: LocalTrackPublication) -> Bool in
             return publication.source == .camera
         }
@@ -101,7 +104,7 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
         guard let sdkTrack: LocalVideoTrack = track.sdkTrack else {
             throw LiveKitRoomMediaError.trackHasNoSdkTrack
         }
-        let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .screen, isGroupCall: isGroupCall)
+        let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .screen, isGroupCall: isGroupCall, prioritizeVP8: prioritizeVP8)
         try await localParticipant.publish(videoTrack: sdkTrack, options: publishOptions)
     }
 
@@ -170,6 +173,8 @@ final class LiveKitAudioTrackHandleSDK: LiveKitAudioTrackHandle, @unchecked Send
     private let track: AudioTrack
     private let lock: NSLock = NSLock()
     private var renderers: [ObjectIdentifier: LiveKitAudioMeterRenderer] = [:]
+    /// The volume setter of the SDK blocks the calling thread, so the writes run on this queue, one after another, off the main actor.
+    private let volumeQueue: DispatchQueue = DispatchQueue(label: "org.impulsem.calls.livekit.playbackVolume")
 
 
     init(participantIdentity: String, isLocal: Bool, track: AudioTrack) {
@@ -205,6 +210,16 @@ final class LiveKitAudioTrackHandleSDK: LiveKitAudioTrackHandle, @unchecked Send
             return
         }
         track.remove(audioRenderer: renderer)
+    }
+
+
+    func setPlaybackVolume(_ volume: Double) {
+        guard !isLocal, let remoteTrack: RemoteAudioTrack = track as? RemoteAudioTrack else {
+            return
+        }
+        volumeQueue.async {
+            remoteTrack.volume = volume
+        }
     }
 
 

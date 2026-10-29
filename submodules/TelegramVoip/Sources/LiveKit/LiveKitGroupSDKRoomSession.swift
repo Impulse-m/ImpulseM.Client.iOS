@@ -90,12 +90,20 @@ final class LiveKitGroupSDKRoomSession: LiveKitGroupRoomSession {
     }
 
 
+    var remoteParticipants: [LiveKitGroupRemoteParticipant] {
+        return LiveKitGroupRemoteVideo.remoteParticipants(of: room)
+    }
+
+
     private let bridge: LiveKitGroupRoomDelegateBridge
     private let room: Room
     private let roomMedia: LiveKitRoomMediaSDK
 
 
-    init(sink: LiveKitGroupRoomEventSink) {
+    init(
+        sink: LiveKitGroupRoomEventSink,
+        prioritizeVP8: Bool = false
+    ) {
         let audioTracks: LiveKitAudioTrackHub = LiveKitAudioTrackHub()
         let roomBridge: LiveKitGroupRoomDelegateBridge = LiveKitGroupRoomDelegateBridge(sink: sink, audioTracks: audioTracks)
         let roomOptions: RoomOptions = RoomOptions()
@@ -109,7 +117,8 @@ final class LiveKitGroupSDKRoomSession: LiveKitGroupRoomSession {
         self.roomMedia = LiveKitRoomMediaSDK(
             localParticipant: roomInstance.localParticipant,
             isGroupCall: true,
-            audioTracks: audioTracks
+            audioTracks: audioTracks,
+            prioritizeVP8: prioritizeVP8
         )
     }
 

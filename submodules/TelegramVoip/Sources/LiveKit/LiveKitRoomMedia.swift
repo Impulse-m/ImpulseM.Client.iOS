@@ -56,6 +56,10 @@ public protocol LiveKitAudioTrackHandle: AnyObject, Sendable {
 
     /// Detaches the meter. A meter that is not attached has no effect.
     func detachMeter(_ meter: LiveKitAudioLevelMeter)
+
+    /// Sets the playout gain of a remote track, from 0 (muted) to 10 (unity gain is 1). The local microphone ignores it.
+    /// The value is applied asynchronously and in the order of the calls.
+    func setPlaybackVolume(_ volume: Double)
 }
 
 

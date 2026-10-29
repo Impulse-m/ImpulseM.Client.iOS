@@ -30,6 +30,8 @@ final class FakeLiveKitAudioTrackHandle: LiveKitAudioTrackHandle, @unchecked Sen
     let isLocal: Bool
     private(set) var attachedMeterIdentifiers: [ObjectIdentifier] = []
     private(set) var detachedMeterIdentifiers: [ObjectIdentifier] = []
+    /// The playout volumes set on the track, in order.
+    private(set) var playbackVolumes: [Double] = []
 
 
     init(participantIdentity: String, isLocal: Bool) {
@@ -45,6 +47,11 @@ final class FakeLiveKitAudioTrackHandle: LiveKitAudioTrackHandle, @unchecked Sen
 
     func detachMeter(_ meter: LiveKitAudioLevelMeter) {
         detachedMeterIdentifiers.append(ObjectIdentifier(meter))
+    }
+
+
+    func setPlaybackVolume(_ volume: Double) {
+        playbackVolumes.append(volume)
     }
 }
 

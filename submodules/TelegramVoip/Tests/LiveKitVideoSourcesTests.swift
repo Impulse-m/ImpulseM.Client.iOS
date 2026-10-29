@@ -33,4 +33,10 @@ final class LiveKitVideoSourcesTests: XCTestCase {
         XCTAssertFalse(LiveKitVideoSources.videoPublishOptions(captureCode: .screen, isGroupCall: true).simulcast)
         XCTAssertFalse(LiveKitVideoSources.videoPublishOptions(captureCode: .screen, isGroupCall: false).simulcast)
     }
+
+
+    func testPrioritizeVP8SetsThePreferredCodec() {
+        XCTAssertEqual(LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: true, prioritizeVP8: true).preferredCodec?.name, "vp8")
+        XCTAssertNil(LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: true).preferredCodec)
+    }
 }

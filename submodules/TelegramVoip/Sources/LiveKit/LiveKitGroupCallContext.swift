@@ -176,6 +176,9 @@ protocol LiveKitGroupRoomEventSink: AnyObject {
 /// A room session of a group connection. Its media seam is the local participant of the room. A session without a room reports nil.
 protocol LiveKitGroupRoomSession: LiveKitRoomSession {
     var media: LiveKitRoomMedia? { get }
+
+    /// The remote participants of the room. Their video publications carry the remote video of the call.
+    var remoteParticipants: [LiveKitGroupRemoteParticipant] { get }
 }
 
 
@@ -228,9 +231,13 @@ public final class LiveKitGroupCallContext {
     private var presentationGeneration: Int = 0
     private(set) var mainMedia: LiveKitRoomMedia?
     private(set) var presentationMedia: LiveKitRoomMedia?
-    private var mainSession: LiveKitRoomSession?
-    private var presentationSession: LiveKitRoomSession?
+    private var mainSession: LiveKitGroupRoomSession?
+    private var presentationSession: LiveKitGroupRoomSession?
     private var endpointsByPeer: [String: Set<String>] = [:]
+    /// The playout volume of each remote source, as the call set it. It is applied to the source's track when the track appears too.
+    private var volumesBySource: [UInt32: Double] = [:]
+    /// The video channels the call requests from the main room. A publication that is not requested is disabled.
+    private var videoRequests: [LiveKitGroupVideoRequest] = []
     private var mainJoinTask: Task<Void, Never>?
     private var presentationJoinTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
@@ -250,8 +257,15 @@ public final class LiveKitGroupCallContext {
         joinRequest: @escaping LiveKitGroupJoinFunction,
         checkRequest: @escaping LiveKitGroupCheckFunction,
         leavePresentationRequest: @escaping LiveKitGroupLeaveFunction,
-        initialMuted: Bool = true
+        initialMuted: Bool = true,
+        prioritizeVP8: Bool = false
     ) {
+        let makeSession: LiveKitGroupRoomSessionFactory = { (sink: LiveKitGroupRoomEventSink) -> LiveKitGroupRoomSession in
+            return LiveKitGroupSDKRoomSession(
+                sink: sink,
+                prioritizeVP8: prioritizeVP8
+            )
+        }
         self.init(
             callId: callId,
             joinRequest: joinRequest,
@@ -260,7 +274,7 @@ public final class LiveKitGroupCallContext {
             initialMuted: initialMuted,
             pollIntervalSeconds: LiveKitGroupCallContext.pollIntervalSeconds,
             nextSource: LiveKitGroupCallContext.randomSource,
-            makeSession: LiveKitGroupCallContext.makeSDKSession,
+            makeSession: makeSession,
             audioLevelClock: LiveKitSystemAudioLevelClock(),
             makeAudioMeter: LiveKitGroupCallContext.makeGroupAudioMeter,
             audioLevelIntervalSeconds: TimeInterval(LiveKitGroupAudioLevels.sampleIntervalMilliseconds) / 1000
@@ -416,8 +430,29 @@ public final class LiveKitGroupCallContext {
     }
 
 
+    /// Sets the playout volume of the audio of a remote source, from 0 to 10, where 1 is unity gain. 0 mutes the track.
+    /// The volume is kept for the source, so a track that appears later is played at it too.
+    public func setVolume(ssrc: UInt32, volume: Double) {
+        let clamped: Double = min(max(volume, 0), 10)
+        volumesBySource[ssrc] = clamped
+        mainAudioLevels.setPlaybackVolume(source: ssrc, volume: clamped)
+        presentationAudioLevels.setPlaybackVolume(source: ssrc, volume: clamped)
+    }
+
+
+    /// Sets the video channels that the call requests from the main room. A requested endpoint is enabled at its quality,
+    /// and every other video publication of the room is disabled. The request is applied once the main connection is joined.
+    public func setRequestedVideoChannels(_ requests: [LiveKitGroupVideoRequest]) {
+        guard !isEnded else {
+            return
+        }
+        videoRequests = requests
+        enqueueMediaOperation(applyVideoRequests)
+    }
+
+
     /// Reads the video endpoints of the other participants from a server participant update.
-    /// A participant with no endpoint clears its earlier endpoints.
+    /// A participant with no endpoint clears its earlier endpoints, so a participant that left is sent with no endpoints.
     public func updateParticipants(_ participants: [LiveKitGroupParticipant]) {
         for participant: LiveKitGroupParticipant in participants where !participant.isSelf {
             var endpoints: Set<String> = []
@@ -429,6 +464,7 @@ public final class LiveKitGroupCallContext {
             }
             endpointsByPeer[participant.peerKey] = endpoints
         }
+        enqueueMediaOperation(applyVideoRequests)
     }
 
 
@@ -478,11 +514,6 @@ public final class LiveKitGroupCallContext {
 
     private nonisolated static func randomSource() -> UInt32 {
         return UInt32.random(in: 1...UInt32.max)
-    }
-
-
-    private nonisolated static func makeSDKSession(_ sink: LiveKitGroupRoomEventSink) -> LiveKitGroupRoomSession {
-        return LiveKitGroupSDKRoomSession(sink: sink)
     }
 
 
@@ -610,6 +641,7 @@ public final class LiveKitGroupCallContext {
         enqueueMediaOperation(applyAudioInput)
         enqueueMediaOperation(applyAudioOutput)
         enqueueMediaOperation(publishCurrentCamera)
+        enqueueMediaOperation(applyVideoRequests)
     }
 
 
@@ -813,6 +845,19 @@ public final class LiveKitGroupCallContext {
             return
         }
         audioLevels(kind: kind).trackDidAppear(handle)
+        applyStoredVolume(to: handle)
+    }
+
+
+    /// Plays a remote track at the volume that the call set for its source. A track without a stored volume keeps the SDK default.
+    private func applyStoredVolume(to handle: LiveKitAudioTrackHandle) {
+        guard !handle.isLocal, let identity: LiveKitGroupIdentity = try? LiveKitGroupIdentity.parse(identity: handle.participantIdentity) else {
+            return
+        }
+        guard let volume: Double = volumesBySource[identity.source] else {
+            return
+        }
+        handle.setPlaybackVolume(volume)
     }
 
 
@@ -950,6 +995,20 @@ public final class LiveKitGroupCallContext {
             return
         }
         try? await media.setCameraEnabled(false)
+    }
+
+
+    /// Applies the requested video channels to the publications of the main room, when the main connection is joined.
+    /// A publication that refuses the change keeps its state, and the call goes on.
+    private func applyVideoRequests() async {
+        guard mainSource != 0, !isEnded, let session: LiveKitGroupRoomSession = mainSession else {
+            return
+        }
+        let requests: [LiveKitGroupVideoRequest] = videoRequests
+        let remoteVideo: LiveKitGroupRemoteVideo = LiveKitGroupRemoteVideo(remoteParticipants: { () -> [LiveKitGroupRemoteParticipant] in
+            return session.remoteParticipants
+        })
+        try? await remoteVideo.applyRequests(requests)
     }
 
 
@@ -1097,6 +1156,14 @@ final class LiveKitGroupRoomAudioLevels {
             key: key,
             meter: meter
         )
+    }
+
+
+    /// Sets the playout volume of the metered tracks that carry the source. Tracks of other sources are not changed.
+    func setPlaybackVolume(source: UInt32, volume: Double) {
+        for attachment: Attachment in attachments.values where attachment.key == .source(source) {
+            attachment.handle.setPlaybackVolume(volume)
+        }
     }
 
 

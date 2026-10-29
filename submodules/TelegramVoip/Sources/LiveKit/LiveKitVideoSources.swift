@@ -37,12 +37,18 @@ public enum LiveKitVideoSources {
     /// Publish options for a video track of the call.
     ///
     /// Camera tracks use simulcast only in a group call. Screen share never uses simulcast.
+    /// The VP8 preference of the call maps to the preferred codec of the track; without it the SDK picks the codec.
     public static func videoPublishOptions(
         captureCode: LiveKitCaptureCode,
-        isGroupCall: Bool
+        isGroupCall: Bool,
+        prioritizeVP8: Bool = false
     ) -> VideoPublishOptions {
         let simulcast: Bool = isGroupCall && captureCode != .screen
-        return VideoPublishOptions(simulcast: simulcast)
+        let preferredCodec: VideoCodec? = prioritizeVP8 ? VideoCodec.vp8 : nil
+        return VideoPublishOptions(
+            simulcast: simulcast,
+            preferredCodec: preferredCodec
+        )
     }
 
 
