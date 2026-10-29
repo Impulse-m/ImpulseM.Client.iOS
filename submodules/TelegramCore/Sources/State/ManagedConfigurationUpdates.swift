@@ -67,7 +67,7 @@ func managedConfigurationUpdates(accountManager: AccountManager<TelegramAccountM
                     
                     updateSearchBotsConfiguration(transaction: transaction, configuration: SearchBotsConfiguration(imageBotUsername: imgSearchUsername, gifBotUsername: gifSearchUsername, venueBotUsername: venueSearchUsername))
                 
-                    updateLinksConfiguration(transaction: transaction, configuration: LinksConfiguration(autologinToken: autologinToken))
+                    updateLinksConfiguration(transaction: transaction, configuration: LinksConfiguration(autologinToken: autologinToken, meUrlPrefix: configData.meUrlPrefix))
                 
                     if let defaultReaction = reactionsDefault, let reaction = MessageReaction.Reaction(apiReaction: defaultReaction) {
                         updateReactionSettings(transaction: transaction, { settings in
