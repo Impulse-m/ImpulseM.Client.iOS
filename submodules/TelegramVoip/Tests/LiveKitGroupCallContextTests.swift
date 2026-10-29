@@ -52,16 +52,26 @@ private func joinParams(room: String) -> String {
 
 
 /// A finite fake room session. It records the join parameters and the disconnects, and fails to connect when told to.
-private final class FakeGroupRoomSession: LiveKitRoomSession, @unchecked Sendable {
+private final class FakeGroupRoomSession: LiveKitGroupRoomSession, @unchecked Sendable {
+    var media: LiveKitRoomMedia? {
+        return fakeMedia
+    }
+
+
     private let lock: NSLock = NSLock()
     private let connectSucceeds: Bool
+    private let fakeMedia: LiveKitRoomMedia?
     private var recordedUrl: String?
     private var recordedToken: String?
     private var recordedDisconnects: Int = 0
 
 
-    init(connectSucceeds: Bool) {
+    init(
+        connectSucceeds: Bool,
+        media: LiveKitRoomMedia?
+    ) {
         self.connectSucceeds = connectSucceeds
+        self.fakeMedia = media
     }
 
 
@@ -128,6 +138,7 @@ private final class FakeGroupRoomSession: LiveKitRoomSession, @unchecked Sendabl
 private final class FakeGroupBackend: @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private let connectSucceeds: Bool
+    private let media: LiveKitRoomMedia?
     private var joinOutcomes: [FakeJoinOutcome]
     private var checkOutcomes: [FakeCheckOutcome]
     private var recordedJoins: [(payload: String, isPresentation: Bool)] = []
@@ -139,11 +150,13 @@ private final class FakeGroupBackend: @unchecked Sendable {
     init(
         joinOutcomes: [FakeJoinOutcome],
         checkOutcomes: [FakeCheckOutcome] = [],
-        connectSucceeds: Bool = true
+        connectSucceeds: Bool = true,
+        media: LiveKitRoomMedia? = nil
     ) {
         self.joinOutcomes = joinOutcomes
         self.checkOutcomes = checkOutcomes
         self.connectSucceeds = connectSucceeds
+        self.media = media
     }
 
 
@@ -223,9 +236,12 @@ private final class FakeGroupBackend: @unchecked Sendable {
     }
 
 
-    func makeSession(sink: LiveKitGroupRoomEventSink) -> LiveKitRoomSession {
-        return read { () -> LiveKitRoomSession in
-            let session: FakeGroupRoomSession = FakeGroupRoomSession(connectSucceeds: connectSucceeds)
+    func makeSession(sink: LiveKitGroupRoomEventSink) -> LiveKitGroupRoomSession {
+        return read { () -> LiveKitGroupRoomSession in
+            let session: FakeGroupRoomSession = FakeGroupRoomSession(
+                connectSucceeds: connectSucceeds,
+                media: media
+            )
             recordedSessions.append(session)
             recordedSinks.append(sink)
             return session
@@ -270,7 +286,7 @@ private func makeContext(
     let leavePresentationRequest: LiveKitGroupLeaveFunction = { () async -> Void in
         backend.recordLeave()
     }
-    let makeSession: LiveKitGroupRoomSessionFactory = { (sink: LiveKitGroupRoomEventSink) -> LiveKitRoomSession in
+    let makeSession: LiveKitGroupRoomSessionFactory = { (sink: LiveKitGroupRoomEventSink) -> LiveKitGroupRoomSession in
         return backend.makeSession(sink: sink)
     }
     return LiveKitGroupCallContext(
@@ -651,5 +667,54 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         XCTAssertTrue(presenting)
         backend.sinks[1].roomDidDisconnectUnexpectedly()
         XCTAssertEqual(context.state, .ended(.disconnected))
+    }
+
+
+    func testRoomsWithoutMediaExposeNoMedia() async throws {
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")]
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        XCTAssertNil(context.mainMedia)
+        context.startPresentation()
+        let presenting: Bool = await waitUntil { () -> Bool in
+            return context.isPresentationActive
+        }
+        XCTAssertTrue(presenting)
+        XCTAssertNil(context.presentationMedia)
+        context.stop()
+    }
+
+
+    func testMediaOfEachRoomIsExposedWhileItLives() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        XCTAssertTrue(context.mainMedia === media)
+        context.startPresentation()
+        let presenting: Bool = await waitUntil { () -> Bool in
+            return context.isPresentationActive
+        }
+        XCTAssertTrue(presenting)
+        XCTAssertTrue(context.presentationMedia === media)
+        context.stopPresentation()
+        XCTAssertNil(context.presentationMedia)
+        XCTAssertTrue(context.mainMedia === media)
+        context.stop()
+        XCTAssertNil(context.mainMedia)
+        XCTAssertNil(context.presentationMedia)
     }
 }

@@ -173,8 +173,14 @@ protocol LiveKitGroupRoomEventSink: AnyObject {
 }
 
 
+/// A room session of a group connection. Its media seam is the local participant of the room. A session without a room reports nil.
+protocol LiveKitGroupRoomSession: LiveKitRoomSession {
+    var media: LiveKitRoomMedia? { get }
+}
+
+
 /// Creates the room session of a group connection from the sink that receives its events.
-typealias LiveKitGroupRoomSessionFactory = (LiveKitGroupRoomEventSink) -> LiveKitRoomSession
+typealias LiveKitGroupRoomSessionFactory = (LiveKitGroupRoomEventSink) -> LiveKitGroupRoomSession
 
 
 /// The group LiveKit call engine. It joins the main connection, polls the call sources and rejoins after eviction,
@@ -213,6 +219,8 @@ public final class LiveKitGroupCallContext {
     private var presentationSource: UInt32 = 0
     private var mainGeneration: Int = 0
     private var presentationGeneration: Int = 0
+    private(set) var mainMedia: LiveKitRoomMedia?
+    private(set) var presentationMedia: LiveKitRoomMedia?
     private var mainSession: LiveKitRoomSession?
     private var presentationSession: LiveKitRoomSession?
     private var endpointsByPeer: [String: Set<String>] = [:]
@@ -296,6 +304,7 @@ public final class LiveKitGroupCallContext {
         presentationSource = 0
         let session: LiveKitRoomSession? = presentationSession
         presentationSession = nil
+        presentationMedia = nil
         let leave: LiveKitGroupLeaveFunction = leavePresentationRequest
         setPresentationActive(false)
         Task { @MainActor in
@@ -348,7 +357,7 @@ public final class LiveKitGroupCallContext {
     }
 
 
-    private nonisolated static func makeSDKSession(_ sink: LiveKitGroupRoomEventSink) -> LiveKitRoomSession {
+    private nonisolated static func makeSDKSession(_ sink: LiveKitGroupRoomEventSink) -> LiveKitGroupRoomSession {
         return LiveKitGroupSDKRoomSession(sink: sink)
     }
 
@@ -440,6 +449,7 @@ public final class LiveKitGroupCallContext {
         updateParticipants(response.participants)
         let previous: LiveKitRoomSession? = mainSession
         mainSession = nil
+        mainMedia = nil
         await previous?.disconnect()
         guard generation == mainGeneration, !isEnded else {
             return
@@ -449,8 +459,9 @@ public final class LiveKitGroupCallContext {
             kind: .main,
             identifier: generation
         )
-        let session: LiveKitRoomSession = makeSession(sink)
+        let session: LiveKitGroupRoomSession = makeSession(sink)
         mainSession = session
+        mainMedia = session.media
         do {
             try await session.connect(url: parameters.url, token: parameters.token)
         } catch {
@@ -537,6 +548,7 @@ public final class LiveKitGroupCallContext {
         updateParticipants(response.participants)
         let previous: LiveKitRoomSession? = presentationSession
         presentationSession = nil
+        presentationMedia = nil
         await previous?.disconnect()
         guard generation == presentationGeneration, presentationRequested, !isEnded else {
             return
@@ -546,8 +558,9 @@ public final class LiveKitGroupCallContext {
             kind: .presentation,
             identifier: generation
         )
-        let session: LiveKitRoomSession = makeSession(sink)
+        let session: LiveKitGroupRoomSession = makeSession(sink)
         presentationSession = session
+        presentationMedia = session.media
         do {
             try await session.connect(url: parameters.url, token: parameters.token)
         } catch {
@@ -651,6 +664,8 @@ public final class LiveKitGroupCallContext {
         let leave: LiveKitGroupLeaveFunction = leavePresentationRequest
         mainSession = nil
         presentationSession = nil
+        mainMedia = nil
+        presentationMedia = nil
         presentationRequested = false
         mainGeneration += 1
         presentationGeneration += 1
@@ -702,62 +717,5 @@ private final class LiveKitGroupRoomSink: LiveKitGroupRoomEventSink {
 
     func roomDidDisconnectUnexpectedly() {
         owner?.roomDidDisconnect(kind: kind, identifier: identifier)
-    }
-}
-
-
-/// Adapts the LiveKit room delegate to the group sink. LiveKit calls it on its own threads, so every event hops to the main actor.
-private final class LiveKitGroupRoomDelegateBridge: NSObject, RoomDelegate, @unchecked Sendable {
-    private let sink: LiveKitGroupRoomEventSink
-
-
-    init(sink: LiveKitGroupRoomEventSink) {
-        self.sink = sink
-        super.init()
-    }
-
-
-    func room(_ room: Room, didFailToConnectWithError error: LiveKitError?) {
-        let target: LiveKitGroupRoomEventSink = sink
-        Task { @MainActor in
-            target.roomDidFailToConnect()
-        }
-    }
-
-
-    func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
-        let target: LiveKitGroupRoomEventSink = sink
-        Task { @MainActor in
-            target.roomDidDisconnectUnexpectedly()
-        }
-    }
-}
-
-
-/// The production group room session: a LiveKit `Room` with default options and no end-to-end encryption.
-private final class LiveKitGroupSDKRoomSession: LiveKitRoomSession {
-    private let bridge: LiveKitGroupRoomDelegateBridge
-    private let room: Room
-
-
-    init(sink: LiveKitGroupRoomEventSink) {
-        let roomBridge: LiveKitGroupRoomDelegateBridge = LiveKitGroupRoomDelegateBridge(sink: sink)
-        let roomOptions: RoomOptions = RoomOptions()
-        self.bridge = roomBridge
-        self.room = Room(
-            delegate: roomBridge,
-            connectOptions: nil,
-            roomOptions: roomOptions
-        )
-    }
-
-
-    func connect(url: String, token: String) async throws {
-        try await room.connect(url: url, token: token)
-    }
-
-
-    func disconnect() async {
-        await room.disconnect()
     }
 }
