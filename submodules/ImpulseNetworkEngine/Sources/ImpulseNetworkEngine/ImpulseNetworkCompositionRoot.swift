@@ -250,7 +250,10 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         let tokens: ImpulseTokens = ImpulseTokens(storage: store, transport: refreshTransport)
         let declarer: ImpulseConnectionDeclarer = ImpulseConnectionDeclarer(
             carrier: updateCarrier,
-            credentials: credentials
+            credentials: credentials,
+            reporter: { (outcome: ImpulseDeclarationOutcome, attempt: Int, code: Int) -> Void in
+                Logger.shared.log("ImpulseNetwork", "The connection declaration: \(outcome.rawValue), attempt \(attempt), error \(code)")
+            }
         )
         let loginGate: ImpulseLoginGate = ImpulseLoginGate(isOpen: store.isLoggedIn)
         let requestService: ImpulseRequestService = ImpulseRequestService(
@@ -287,11 +290,11 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             setSignedIn: { (signedIn: Bool) -> Void in
                 loginGate.setOpen(signedIn)
             },
-            credentials: nil,
-            declarer: nil
+            credentials: credentials,
+            declarer: declarer
         )
 
-        link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials))
+        link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials, declarer: declarer))
 
         let routeUpdateSocket: any ImpulseRouteUpdateSocket = seams?.updateSocket ?? ImpulseRootUpdateSocketAdapter(client: updateClient)
         let routePool: any ImpulseRoutePool = seams?.pool ?? ImpulseRootPoolAdapter(pool: pool)

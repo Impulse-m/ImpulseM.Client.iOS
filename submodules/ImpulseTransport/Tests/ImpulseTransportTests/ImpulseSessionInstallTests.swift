@@ -32,6 +32,19 @@ private func liveInstallBytes(hex: String) throws -> [UInt8] {
 }
 
 
+private func liveInstallDeclaration() -> ImpulseDeclaration {
+    return ImpulseDeclaration(
+        apiId: 4,
+        deviceModel: "Mac",
+        systemVersion: "14",
+        appVersion: "1",
+        systemLangCode: "en",
+        langPack: ImpulseDeclaration.macosLangPack,
+        langCode: "en"
+    )
+}
+
+
 /// The record of the events of one test, in order. The socket and the update carrier write to it.
 private final class LiveInstallEvents: @unchecked Sendable {
     private let lock: NSLock = NSLock()
@@ -209,7 +222,9 @@ private struct LiveInstallFixture {
 
 
 private func makeLiveInstallFixture(
-    replies: [Result<[UInt8], ImpulseCarrierFailure>]
+    replies: [Result<[UInt8], ImpulseCarrierFailure>],
+    credentials: ImpulseConnectionCredentialCache? = nil,
+    declarer: ImpulseConnectionDeclarer? = nil
 ) throws -> LiveInstallFixture {
     let mapping: ImpulseMapping = try ImpulseMapping.loadBundled()
     let events: LiveInstallEvents = LiveInstallEvents()
@@ -240,8 +255,8 @@ private func makeLiveInstallFixture(
         setSignedIn: { (signedIn: Bool) -> Void in
             loginGate.setOpen(signedIn)
         },
-        credentials: nil,
-        declarer: nil
+        credentials: credentials,
+        declarer: declarer
     )
     let carrier: LiveInstallCarrier = LiveInstallCarrier(
         events: events,
@@ -396,6 +411,40 @@ final class ImpulseSessionInstallTests: XCTestCase {
                 "send auth.resetAuthorizations",
             ]
         )
+    }
+
+
+    /// The install puts the session credential in the cache and declares the connection again on it, after the mint declared
+    /// the identity.
+    func testInstallDeclaresTheConnectionAgainOnTheSessionCredential() async throws {
+        let declarerEvents: LiveInstallEvents = LiveInstallEvents()
+        let declarerCarrier: LiveInstallCarrier = LiveInstallCarrier(
+            events: declarerEvents,
+            replies: [],
+            defaultReply: .success([])
+        )
+        let credentials: ImpulseConnectionCredentialCache = ImpulseConnectionCredentialCache()
+        credentials.setIdentityToken("identity-token")
+        let declarer: ImpulseConnectionDeclarer = ImpulseConnectionDeclarer(
+            carrier: declarerCarrier,
+            credentials: credentials
+        )
+        await declarer.setDeclaration(liveInstallDeclaration())
+        let declaredOnMint: Bool = await declarer.awaitDeclared(timeoutSeconds: 2)
+
+        let fixture: LiveInstallFixture = try makeLiveInstallFixture(
+            replies: [.success(try liveInstallBytes(hex: liveInstallCheckPasswordHex))],
+            credentials: credentials,
+            declarer: declarer
+        )
+        let tl: [UInt8] = try liveInstallMethodTl(mapping: fixture.mapping, name: "auth.checkPassword")
+        _ = await liveInstallPerform(session: fixture.session, tl: tl)
+        let declaredOnSession: Bool = await declarer.awaitDeclared(timeoutSeconds: 2)
+
+        XCTAssertTrue(declaredOnMint)
+        XCTAssertTrue(declaredOnSession)
+        XCTAssertEqual(credentials.currentCredential(), "A")
+        XCTAssertEqual(declarerEvents.all(), ["send initConnection", "send initConnection"])
     }
 
 

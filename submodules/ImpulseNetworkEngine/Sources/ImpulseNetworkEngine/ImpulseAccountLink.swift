@@ -17,6 +17,7 @@ struct ImpulseAccountParts {
     let tokens: ImpulseTokens
     let identity: ImpulseIdentityManager
     let credentials: ImpulseConnectionCredentialCache
+    let declarer: ImpulseConnectionDeclarer
 }
 
 
@@ -51,11 +52,13 @@ final class ImpulseAccountLink {
             do {
                 if let accessToken: String = try await current.tokens.connectionToken() {
                     current.credentials.setSessionAccessToken(accessToken)
+                    await current.declarer.credentialChanged()
                     completion(.success(accessToken))
                     return
                 }
                 let identityToken: String = try await current.identity.obtain()
                 current.credentials.setIdentityToken(identityToken)
+                await current.declarer.credentialChanged()
                 completion(.success(identityToken))
             } catch {
                 completion(.failure(error))
