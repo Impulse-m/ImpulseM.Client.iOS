@@ -231,12 +231,14 @@ private func makeLiveInstallFixture(
         scheduler: ImpulseTaskScheduler(),
         apiId: 4
     )
+    let loginGate: ImpulseLoginGate = ImpulseLoginGate(isOpen: false)
     let installer: ImpulseSessionInstaller = ImpulseSessionInstaller(
         identity: identity,
         tokens: tokens,
         realtime: realtime,
         mapping: mapping,
         setSignedIn: { (signedIn: Bool) -> Void in
+            loginGate.setOpen(signedIn)
         },
         credentials: nil,
         declarer: nil
@@ -257,6 +259,7 @@ private func makeLiveInstallFixture(
         declarations: nil,
         signedIn: false,
         delegate: nil,
+        loginGate: loginGate,
         sessionInstaller: installer
     )
     return LiveInstallFixture(
@@ -355,6 +358,42 @@ final class ImpulseSessionInstallTests: XCTestCase {
                 "token A",
                 "connect",
                 "subscribe user:3 true true",
+            ]
+        )
+    }
+
+
+    /// A session call made before the login waits for the install: nothing is sent, then the socket is rekeyed to the access
+    /// token, and only after that the call goes out.
+    func testSessionCallWaitsForTheInstallAndIsSentAfterTheRekey() async throws {
+        let fixture: LiveInstallFixture = try makeLiveInstallFixture(
+            replies: [.success(try liveInstallBytes(hex: liveInstallLoginTokenSuccessHex))]
+        )
+        let resetTl: [UInt8] = try liveInstallMethodTl(mapping: fixture.mapping, name: "auth.resetAuthorizations")
+        let loginTl: [UInt8] = try liveInstallMethodTl(mapping: fixture.mapping, name: "auth.importLoginToken")
+
+        let waiting: Task<Result<ImpulseNetworkResponse, ImpulseRequestFailure>, Never> = Task {
+            return await liveInstallPerform(
+                session: fixture.session,
+                tl: resetTl,
+                options: ImpulseRequestOptions()
+            )
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(fixture.events.all(), [])
+
+        _ = await liveInstallPerform(session: fixture.session, tl: loginTl)
+        _ = await waiting.value
+
+        XCTAssertEqual(
+            fixture.events.all(),
+            [
+                "send auth.importLoginToken",
+                "disconnect",
+                "token A",
+                "connect",
+                "subscribe user:3 true true",
+                "send auth.resetAuthorizations",
             ]
         )
     }

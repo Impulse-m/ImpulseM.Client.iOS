@@ -339,19 +339,21 @@ extension ImpulseTokens: ImpulseRequestSession {
 }
 
 
-/// Holds the requests that wait for a login. It opens when a user logs in and closes when the session ends.
-internal final class ImpulseLoginGate: @unchecked Sendable {
+/// Holds the requests that wait for a login. It opens when a user logs in and closes when the session ends. One gate is
+/// shared by the request services of an account, so a login releases the requests of every session of that account.
+public final class ImpulseLoginGate: @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private var isOpen: Bool
     private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
 
 
-    internal init(isOpen: Bool) {
+    public init(isOpen: Bool) {
         self.isOpen = isOpen
     }
 
 
-    internal func setOpen(_ value: Bool) {
+    /// Opens the gate, which releases the waiting requests, or closes it.
+    public func setOpen(_ value: Bool) {
         var released: [CheckedContinuation<Bool, Never>] = []
         self.lock.lock()
         self.isOpen = value
@@ -464,14 +466,15 @@ public final class ImpulseRequestService: Sendable {
         declarations: (any ImpulseDeclarationGate)?,
         signedIn: Bool,
         onAuthorizationRequired: @escaping @Sendable () -> Void,
-        clock: any ImpulseRequestClock = ImpulseSystemRequestClock()
+        clock: any ImpulseRequestClock = ImpulseSystemRequestClock(),
+        loginGate: ImpulseLoginGate? = nil
     ) {
         self.session = session
         self.updateCarrier = updateCarrier
         self.mediaCarrier = mediaCarrier
         self.poolCarrier = poolCarrier
         self.declarations = declarations
-        self.loginGate = ImpulseLoginGate(isOpen: signedIn)
+        self.loginGate = loginGate ?? ImpulseLoginGate(isOpen: signedIn)
         self.routeEpoch = ImpulseRouteEpochCounter()
         self.onAuthorizationRequired = onAuthorizationRequired
         self.clock = clock

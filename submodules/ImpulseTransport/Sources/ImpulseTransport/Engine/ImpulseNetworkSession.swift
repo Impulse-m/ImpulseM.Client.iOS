@@ -115,6 +115,7 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
         signedIn: Bool,
         delegate: (any ImpulseNetworkSessionDelegate)?,
         clock: any ImpulseRequestClock = ImpulseSystemRequestClock(),
+        loginGate: ImpulseLoginGate? = nil,
         sessionInstaller: ImpulseSessionInstaller? = nil
     ) {
         self.datacenterId = datacenterId
@@ -139,7 +140,8 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
             declarations: declarations,
             signedIn: signedIn,
             onAuthorizationRequired: authorizationRequired,
-            clock: clock
+            clock: clock,
+            loginGate: loginGate
         )
     }
 
@@ -166,10 +168,11 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
 
         let predecessor: ImpulseRequestCall? = self.predecessor(accepting: request.dependsOn)
         let report: ImpulseSendReport = ImpulseSendReport(onSent: request.acknowledged)
+        let options: ImpulseRequestOptions = ImpulseNetworkSession.loginOptions(request.options, method: encoded.method)
         let inner: ImpulseRequestCall = ImpulseSendReportContext.$current.withValue(report) {
             return self.service.submit(
                 request: encoded,
-                options: request.options,
+                options: options,
                 dependsOn: predecessor
             )
         }
@@ -194,6 +197,24 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
             call: outer
         )
         return outer
+    }
+
+
+    /// The options of a call with its login flag set per method, as Android does: a call of an identity-socket method is
+    /// sent without a login, and every other call waits for one. A caller may still ask for `withoutLogin` itself.
+    private static func loginOptions(
+        _ options: ImpulseRequestOptions,
+        method: String
+    ) -> ImpulseRequestOptions {
+        let identitySocketMethod: Bool = ImpulseMethodClasses.identitySocketMethods.contains(method)
+        return ImpulseRequestOptions(
+            withoutLogin: options.withoutLogin || identitySocketMethod,
+            failOnServerErrors: options.failOnServerErrors,
+            failOnServerErrorsExceptFloodWait: options.failOnServerErrorsExceptFloodWait,
+            doNotWaitFloodWait: options.doNotWaitFloodWait,
+            totalDeadlineSeconds: options.totalDeadlineSeconds,
+            forceDownload: options.forceDownload
+        )
     }
 
 

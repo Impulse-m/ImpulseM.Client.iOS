@@ -40,10 +40,11 @@ protocol ImpulseNetworkTransportControl: AnyObject {
 final class ImpulseNetworkEngineSession: NetworkEngineSession {
     /// The most sends of a request whose reply does not parse, the first one included.
     private static let parseFailureAttempts: Int = 3
-    /// The options of every request on the transport. The session answers server errors and flood waits itself, and
-    /// it does not hold a request for a login, as the other engines do not.
+    /// The options of every request on the transport. The session answers server errors and flood waits itself. The
+    /// login flag is set by the transport per method: identity-socket methods are sent without a login, and the others
+    /// wait for one, as on Android.
     private static let requestOptions: ImpulseRequestOptions = ImpulseRequestOptions(
-        withoutLogin: true,
+        withoutLogin: false,
         failOnServerErrors: true,
         failOnServerErrorsExceptFloodWait: false,
         doNotWaitFloodWait: true,

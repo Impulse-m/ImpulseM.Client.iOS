@@ -161,6 +161,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
     let mediaCarrier: ImpulseMediaRequestCarrier
     let declarer: ImpulseConnectionDeclarer
     let requestService: ImpulseRequestService
+    let loginGate: ImpulseLoginGate
     let sessionInstaller: ImpulseSessionInstaller
     let telemetry: ImpulseTelemetry
     let realtime: ImpulseRealtime
@@ -251,6 +252,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             carrier: updateCarrier,
             credentials: credentials
         )
+        let loginGate: ImpulseLoginGate = ImpulseLoginGate(isOpen: store.isLoggedIn)
         let requestService: ImpulseRequestService = ImpulseRequestService(
             session: tokens,
             updateCarrier: updateCarrier,
@@ -258,7 +260,8 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             poolCarrier: poolRequestCarrier,
             declarations: declarer,
             signedIn: store.isLoggedIn,
-            onAuthorizationRequired: {}
+            onAuthorizationRequired: {},
+            loginGate: loginGate
         )
         let telemetry: ImpulseTelemetry = ImpulseTelemetry(
             sink: ImpulseRequestTelemetrySink(transcoder: transcoder, requester: requestService)
@@ -282,7 +285,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             realtime: realtime,
             mapping: inputs.mapping,
             setSignedIn: { (signedIn: Bool) -> Void in
-                requestService.setSignedIn(signedIn)
+                loginGate.setOpen(signedIn)
             },
             credentials: nil,
             declarer: nil
@@ -310,6 +313,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         self.mediaCarrier = mediaCarrier
         self.declarer = declarer
         self.requestService = requestService
+        self.loginGate = loginGate
         self.sessionInstaller = sessionInstaller
         self.telemetry = telemetry
         self.realtime = realtime
@@ -557,6 +561,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             declarations: self.declarer,
             signedIn: self.sessionStore.isLoggedIn,
             delegate: events,
+            loginGate: self.loginGate,
             sessionInstaller: self.sessionInstaller
         )
     }
