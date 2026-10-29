@@ -52,7 +52,7 @@ enum ImpulseKeychainQuery {
         query[kSecClass as String] = kSecClassGenericPassword
         query[kSecAttrService as String] = service
         query[kSecAttrAccount as String] = account
-        if let accessGroup: String = accessGroup {
+        if let accessGroup: String = accessGroup, !accessGroup.isEmpty {
             query[kSecAttrAccessGroup as String] = accessGroup
         }
         query[kSecUseDataProtectionKeychain as String] = true

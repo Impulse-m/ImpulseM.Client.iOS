@@ -10,7 +10,7 @@ struct ImpulseNetworkCompositionInputs {
     let endpoints: ImpulseEndpoints
     let mapping: ImpulseMapping
     let keychain: any ImpulseKeychain
-    let keychainAccessGroup: String
+    let keychainAccessGroup: String?
     let identityClock: any ImpulseIdentityClock
     let identityScheduler: any ImpulseIdentityScheduler
     let declaration: ImpulseDeclaration
