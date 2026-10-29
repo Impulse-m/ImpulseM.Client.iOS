@@ -9,6 +9,10 @@ private final class PoolRequestMainDouble: ImpulsePoolMain {
 
     func connect() {
     }
+
+
+    func disconnect() {
+    }
 }
 
 

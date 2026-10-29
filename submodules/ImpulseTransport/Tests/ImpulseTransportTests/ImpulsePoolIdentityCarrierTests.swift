@@ -64,6 +64,10 @@ private final class PoolIdentityMainDouble: ImpulsePoolMain {
 
     func connect() {
     }
+
+
+    func disconnect() {
+    }
 }
 
 

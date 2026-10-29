@@ -34,11 +34,14 @@ public struct ImpulsePoolCall {
 public typealias ImpulsePoolIdentityRenewal = (@escaping (Result<Void, Error>) -> Void) -> Void
 
 
-/// The main client of a pool, as the carrier drives it: its state and its connect. The carrier never disconnects it.
+/// The main client of a pool, as the carrier drives it: its state, its connect and its disconnect. The carrier disconnects
+/// it only in `resetMain()`, when the route changes.
 internal protocol ImpulsePoolMain: AnyObject {
     var state: CentrifugeClientState { get }
 
     func connect()
+
+    func disconnect()
 }
 
 
@@ -113,12 +116,14 @@ internal final class ImpulsePoolMainDelegate: CentrifugeClientDelegate {
 }
 
 
-/// One SDK rpc pool on one endpoint, served by a dedicated main client that the app connects once and never disconnects.
+/// One SDK rpc pool on one endpoint, served by a dedicated main client that the app connects and disconnects only to
+/// move it to a new route.
 ///
 /// The pool never presents a token: its connections carry none, and only the identity methods are served. The
 /// watchdog connects the main again when the SDK left it disconnected while the pool is wanted. A main whose session
-/// ended renews the identity first. The carrier does not disconnect the main, so a pool call fails only while the main
-/// is disconnected, with `ImpulsePoolFailure.mainDisconnected` or `.sessionEnded`.
+/// ended renews the identity first. `resetMain()` disconnects the main once after a route change, and the watchdog
+/// connects it again over the current route. A pool call fails only while the main is disconnected, with
+/// `ImpulsePoolFailure.mainDisconnected` or `.sessionEnded`.
 ///
 /// Completions run on the pool's queue, except local refusals, which run on the carrier's queue. The carrier is thread-safe.
 public final class ImpulsePoolCarrier {
@@ -157,6 +162,7 @@ public final class ImpulsePoolCarrier {
     private let mainDelegate: ImpulsePoolMainDelegate?
 
     private var wanted: Bool = false
+    private var mainResetPending: Bool = false
     private var sessionEnded: Bool = false
     private var renewalInFlight: Bool = false
     private var renewalRetryAtNanos: UInt64 = 0
@@ -236,12 +242,28 @@ public final class ImpulsePoolCarrier {
     }
 
 
-    /// Stops the watchdog and stops restarting the main. The main is not disconnected: the carrier never disconnects it.
+    /// Stops the watchdog and stops restarting the main. The main is not disconnected by `stop()`.
     public func stop() {
         self.queue.sync {
             self.wanted = false
             self.timer?.cancel()
             self.timer = nil
+        }
+    }
+
+
+    /// Disconnects the main once, after a route change, so that the watchdog connects it again over the current route. It
+    /// does not change whether the pool is wanted, so a stopped carrier never reconnects. Calls made again before the
+    /// watchdog reconnects do nothing.
+    public func resetMain() {
+        self.queue.sync {
+            guard !self.mainResetPending else {
+                return
+            }
+            self.mainResetPending = true
+            if self.main.state != .disconnected {
+                self.main.disconnect()
+            }
         }
     }
 
@@ -309,9 +331,10 @@ public final class ImpulsePoolCarrier {
 
 
     /// The configuration of the main client when none is injected: the socket policy (reconnect backoff from 1 to 30 seconds,
-    /// the ping watchdog) under the pool's client name, with no token.
-    internal static func makeMainConfig() -> CentrifugeClientConfig {
-        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+    /// the ping watchdog) under the pool's client name, with no token. The native socket connects through the route of
+    /// `routeSource`, or directly when there is none.
+    internal static func makeMainConfig(routeSource: ImpulseProxyRouteSource? = nil) -> CentrifugeClientConfig {
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "", routeSource: routeSource)
         config.name = ImpulsePoolCarrier.clientName
         return config
     }
@@ -412,6 +435,7 @@ public final class ImpulsePoolCarrier {
         guard self.main.state == .disconnected else {
             return
         }
+        self.mainResetPending = false
         self.main.connect()
     }
 

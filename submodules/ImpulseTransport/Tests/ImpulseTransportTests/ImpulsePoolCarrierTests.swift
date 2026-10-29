@@ -6,12 +6,18 @@ import SwiftCentrifuge
 private final class FakePoolMain: ImpulsePoolMain {
     var state: CentrifugeClientState = .disconnected
     var connectCount: Int = 0
+    var disconnectCount: Int = 0
 
 
-    // There is no disconnect here on purpose: the carrier never disconnects its main.
     func connect() {
         self.connectCount += 1
         self.state = .connecting
+    }
+
+
+    func disconnect() {
+        self.disconnectCount += 1
+        self.state = .disconnected
     }
 }
 
@@ -68,6 +74,22 @@ private final class MainConfigRecorder {
 }
 
 
+private final class FakeRouteObservation: ImpulseProxyRouteObservation {
+    func cancel() {
+    }
+}
+
+
+private final class FakeRouteSource: ImpulseProxyRouteSource, Sendable {
+    let currentRoute: ImpulseProxyRoute? = nil
+
+
+    func observe(_ handler: @escaping @Sendable (Int) -> Void) -> ImpulseProxyRouteObservation {
+        return FakeRouteObservation()
+    }
+}
+
+
 final class ImpulsePoolCarrierTests: XCTestCase {
     func testPoolOptionsNeverPresentToken() {
         let options: CentrifugeRpcPoolOptions = ImpulsePoolCarrier.makePoolOptions(endpoint: "wss://rpc.impulsem.io/ws")
@@ -117,6 +139,16 @@ final class ImpulsePoolCarrierTests: XCTestCase {
         XCTAssertEqual(received.maxServerPingDelay, ImpulseSocketPolicy.maxServerPingDelaySeconds)
         XCTAssertTrue(received.useNativeWebSocket)
         XCTAssertTrue(received.token.isEmpty)
+    }
+
+
+    func testMainConfigCarriesTheRouteProviderOnlyWithASource() {
+        let routed: CentrifugeClientConfig = ImpulsePoolCarrier.makeMainConfig(routeSource: FakeRouteSource())
+        XCTAssertNotNil(routed.urlSessionConfigurationProvider)
+        XCTAssertEqual(routed.name, ImpulsePoolCarrier.clientName)
+        XCTAssertTrue(routed.useNativeWebSocket)
+        let direct: CentrifugeClientConfig = ImpulsePoolCarrier.makeMainConfig()
+        XCTAssertNil(direct.urlSessionConfigurationProvider)
     }
 
 
@@ -174,6 +206,51 @@ final class ImpulsePoolCarrierTests: XCTestCase {
         carrier.stop()
         main.state = .disconnected
         carrier.runWatchdogTick()
+        XCTAssertEqual(main.connectCount, 1)
+    }
+
+
+    func testResetMainDisconnectsOnceAndNextTickConnectsAgain() {
+        let main: FakePoolMain = FakePoolMain()
+        let carrier: ImpulsePoolCarrier = makeCarrier(main: main, transport: FakePoolTransport())
+        carrier.start()
+        XCTAssertEqual(main.connectCount, 1)
+        main.state = .connected
+        carrier.resetMain()
+        XCTAssertEqual(main.disconnectCount, 1)
+        XCTAssertEqual(main.state, .disconnected)
+        carrier.resetMain()
+        XCTAssertEqual(main.disconnectCount, 1)
+        carrier.runWatchdogTick()
+        XCTAssertEqual(main.connectCount, 2)
+        XCTAssertEqual(main.disconnectCount, 1)
+    }
+
+
+    func testResetMainKeepsThePoolWanted() {
+        let main: FakePoolMain = FakePoolMain()
+        let carrier: ImpulsePoolCarrier = makeCarrier(main: main, transport: FakePoolTransport())
+        carrier.start()
+        main.state = .connected
+        carrier.resetMain()
+        carrier.runWatchdogTick()
+        XCTAssertEqual(main.connectCount, 2)
+        main.state = .disconnected
+        carrier.runWatchdogTick()
+        XCTAssertEqual(main.connectCount, 3)
+    }
+
+
+    func testStoppedCarrierNeverReconnectsAfterResetMain() {
+        let main: FakePoolMain = FakePoolMain()
+        let carrier: ImpulsePoolCarrier = makeCarrier(main: main, transport: FakePoolTransport())
+        carrier.start()
+        carrier.stop()
+        main.state = .connected
+        carrier.resetMain()
+        XCTAssertEqual(main.disconnectCount, 1)
+        carrier.runWatchdogTick()
+        carrier.drainQueue()
         XCTAssertEqual(main.connectCount, 1)
     }
 
