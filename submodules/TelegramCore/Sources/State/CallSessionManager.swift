@@ -6,6 +6,15 @@ internal import TelegramApi
 
 private let minLayer: Int32 = 65
 
+func callSessionCustomParameters(_ customParameters: Api.DataJSON?) -> String? {
+    switch customParameters {
+    case .none:
+        return nil
+    case let .dataJSON(dataJSONData):
+        return dataJSONData.data
+    }
+}
+
 public enum CallSessionError: Equatable {
     case generic
     case privacyRestricted
@@ -1217,14 +1226,7 @@ private final class CallSessionManagerContext {
                                         case let .phoneCallProtocol(phoneCallProtocolData):
                                             let (maxLayer, versions) = (phoneCallProtocolData.maxLayer, phoneCallProtocolData.libraryVersions)
                                             if !versions.isEmpty {
-                                                var customParametersValue: String?
-                                                switch customParameters {
-                                                case .none:
-                                                    break
-                                                case let .dataJSON(dataJSONData):
-                                                    let data = dataJSONData.data
-                                                    customParametersValue = data
-                                                }
+                                                let customParametersValue: String? = callSessionCustomParameters(customParameters)
 
                                                 let isVideoPossible = self.videoVersions().contains(where: { versions.contains($0) })
                                                 context.isVideoPossible = isVideoPossible
@@ -1246,14 +1248,7 @@ private final class CallSessionManagerContext {
                                 case let .phoneCallProtocol(phoneCallProtocolData):
                                     let (maxLayer, versions) = (phoneCallProtocolData.maxLayer, phoneCallProtocolData.libraryVersions)
                                     if !versions.isEmpty {
-                                        var customParametersValue: String?
-                                        switch customParameters {
-                                        case .none:
-                                            break
-                                        case let .dataJSON(dataJSONData):
-                                            let data = dataJSONData.data
-                                            customParametersValue = data
-                                        }
+                                        let customParametersValue: String? = callSessionCustomParameters(customParameters)
 
                                         let isVideoPossible = self.videoVersions().contains(where: { versions.contains($0) })
                                         context.isVideoPossible = isVideoPossible
@@ -1646,14 +1641,7 @@ private func acceptCallSession(accountPeerId: PeerId, postbox: Postbox, network:
                                     case let .phoneCallProtocol(phoneCallProtocolData):
                                         let (maxLayer, versions) = (phoneCallProtocolData.maxLayer, phoneCallProtocolData.libraryVersions)
                                         if !versions.isEmpty {
-                                            var customParametersValue: String?
-                                            switch customParameters {
-                                            case .none:
-                                                break
-                                            case let .dataJSON(dataJSONData):
-                                                let data = dataJSONData.data
-                                                customParametersValue = data
-                                            }
+                                            let customParametersValue: String? = callSessionCustomParameters(customParameters)
 
                                             return .success(.call(config: config, gA: gAOrB.makeData(), timestamp: startDate, connections: parseConnectionSet(primary: connections.first!, alternative: Array(connections[1...])), maxLayer: maxLayer, version: versions[0], customParameters: customParametersValue, allowsP2P: (flags & (1 << 5)) != 0, supportsConferenceCalls: (flags & (1 << 8)) != 0))
                                         } else {
