@@ -241,6 +241,8 @@ public final class LiveKitGroupCallContext {
     private let presentationAudioLevels: LiveKitGroupRoomAudioLevels
     private let audioLevelIntervalSeconds: TimeInterval
     private var audioLevelTask: Task<Void, Never>?
+    private var audioInputId: String?
+    private var audioOutputId: String?
 
 
     public convenience init(
@@ -389,6 +391,28 @@ public final class LiveKitGroupCallContext {
         }
         isNoiseSuppressionEnabled = enabled
         enqueueMediaOperation(applyNoiseSuppression)
+    }
+
+
+    /// Selects the microphone of the main room by its device id. The id is kept and applied again on every connect.
+    /// An id that no device owns is ignored by the media seam.
+    public func switchAudioInput(_ deviceId: String) {
+        guard !isEnded else {
+            return
+        }
+        audioInputId = deviceId
+        enqueueMediaOperation(applyAudioInput)
+    }
+
+
+    /// Selects the speaker of the main room by its device id. The id is kept and applied again on every connect.
+    /// An id that no device owns is ignored by the media seam.
+    public func switchAudioOutput(_ deviceId: String) {
+        guard !isEnded else {
+            return
+        }
+        audioOutputId = deviceId
+        enqueueMediaOperation(applyAudioOutput)
     }
 
 
@@ -583,6 +607,8 @@ public final class LiveKitGroupCallContext {
         startPolling()
         startAudioLevelTimer()
         enqueueMediaOperation(applyMainAudio)
+        enqueueMediaOperation(applyAudioInput)
+        enqueueMediaOperation(applyAudioOutput)
         enqueueMediaOperation(publishCurrentCamera)
     }
 
@@ -880,6 +906,24 @@ public final class LiveKitGroupCallContext {
                 end(.connectionFailed)
             }
         }
+    }
+
+
+    /// Applies the selected microphone to the main room, when the main connection is joined. A switch that fails keeps the current device.
+    private func applyAudioInput() async {
+        guard mainSource != 0, !isEnded, let media: LiveKitRoomMedia = mainMedia, let deviceId: String = audioInputId else {
+            return
+        }
+        try? await media.setAudioInputDevice(id: deviceId)
+    }
+
+
+    /// Applies the selected speaker to the main room, when the main connection is joined. A switch that fails keeps the current device.
+    private func applyAudioOutput() async {
+        guard mainSource != 0, !isEnded, let media: LiveKitRoomMedia = mainMedia, let deviceId: String = audioOutputId else {
+            return
+        }
+        try? await media.setAudioOutputDevice(id: deviceId)
     }
 
 

@@ -323,6 +323,30 @@ private func makeContext(
 }
 
 
+/// The microphone identifiers the fake room media received, in order.
+private func recordedInputDeviceIds(_ media: FakeLiveKitRoomMedia) -> [String] {
+    var deviceIds: [String] = []
+    for call: FakeLiveKitRoomMediaCall in media.calls {
+        if case let .setAudioInputDevice(deviceId) = call {
+            deviceIds.append(deviceId)
+        }
+    }
+    return deviceIds
+}
+
+
+/// The speaker identifiers the fake room media received, in order.
+private func recordedOutputDeviceIds(_ media: FakeLiveKitRoomMedia) -> [String] {
+    var deviceIds: [String] = []
+    for call: FakeLiveKitRoomMediaCall in media.calls {
+        if case let .setAudioOutputDevice(deviceId) = call {
+            deviceIds.append(deviceId)
+        }
+    }
+    return deviceIds
+}
+
+
 /// Polls a condition for a bounded number of steps and reports whether it became true.
 @MainActor
 private func waitUntil(_ predicate: () -> Bool) async -> Bool {
@@ -970,6 +994,101 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         }
         XCTAssertTrue(unmuted)
         context.stop()
+    }
+
+
+    func testInputDeviceSelectedBeforeConnectIsAppliedOnConnect() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.switchAudioInput("mic-early")
+        XCTAssertTrue(media.calls.isEmpty)
+        context.start()
+        let applied: Bool = await waitUntil { () -> Bool in
+            return recordedInputDeviceIds(media).contains("mic-early")
+        }
+        XCTAssertTrue(applied)
+        context.stop()
+    }
+
+
+    func testOutputDeviceSelectedBeforeConnectIsAppliedOnConnect() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.switchAudioOutput("speaker-early")
+        context.start()
+        let applied: Bool = await waitUntil { () -> Bool in
+            return recordedOutputDeviceIds(media).contains("speaker-early")
+        }
+        XCTAssertTrue(applied)
+        context.stop()
+    }
+
+
+    func testInputDeviceSwitchWhileConnectedAppliesAtOnce() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let connected: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setMicrophoneEnabled(false))
+        }
+        XCTAssertTrue(connected)
+        context.switchAudioInput("mic-changed")
+        let applied: Bool = await waitUntil { () -> Bool in
+            return recordedInputDeviceIds(media).contains("mic-changed")
+        }
+        XCTAssertTrue(applied)
+        context.stop()
+    }
+
+
+    func testLastInputDeviceSwitchWins() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let connected: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setMicrophoneEnabled(false))
+        }
+        XCTAssertTrue(connected)
+        context.switchAudioInput("mic-first")
+        context.switchAudioInput("mic-last")
+        let settled: Bool = await waitUntil { () -> Bool in
+            return recordedInputDeviceIds(media).count >= 2
+        }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(recordedInputDeviceIds(media).last, "mic-last")
+        context.stop()
+    }
+
+
+    func testSwitchAfterStopIsIgnored() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.stop()
+        context.switchAudioInput("mic-late")
+        context.switchAudioOutput("speaker-late")
+        try await Task.sleep(nanoseconds: testWaitStepNanoseconds * 5)
+        XCTAssertTrue(recordedInputDeviceIds(media).isEmpty)
+        XCTAssertTrue(recordedOutputDeviceIds(media).isEmpty)
     }
 
 
