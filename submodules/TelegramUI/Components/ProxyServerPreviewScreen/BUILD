@@ -27,6 +27,7 @@ swift_library(
         "//submodules/PresentationDataUtils",
         "//submodules/Components/BundleIconComponent",
         "//submodules/OverlayStatusController",
+        "//submodules/ImpulseProxy:ImpulseProxy",
     ],
     visibility = [
         "//visibility:public",

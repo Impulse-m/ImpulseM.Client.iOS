@@ -149,6 +149,7 @@ swift_library(
         "//submodules/PasscodeCore",
         "//submodules/WalletContext",
         "//submodules/ImpulseFeatures:ImpulseFeatures",
+        "//submodules/ImpulseProxy:ImpulseProxy",
     ],
     visibility = [
         "//visibility:public",

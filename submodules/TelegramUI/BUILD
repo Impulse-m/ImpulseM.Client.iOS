@@ -571,6 +571,8 @@ swift_library(
         "//submodules/WalletContext",
         "//submodules/PasscodeCore",
         "//submodules/ImpulseNetworkEngine:ImpulseNetworkEngine",
+        "//submodules/ImpulseFeatures:ImpulseFeatures",
+        "//submodules/ImpulseProxy:ImpulseProxy",
     ],
     visibility = [
         "//visibility:public",
