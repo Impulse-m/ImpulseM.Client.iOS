@@ -1111,6 +1111,90 @@ final class ImpulseRequestServiceTests: XCTestCase {
     }
 
 
+    /// During a route transition every network failure is a route failure: it is retried at once and spends no budget.
+    /// Eight failures are more than a download allows, so only the reply ends the call, and no wait is taken.
+    func testRouteTransitionFailuresAreRetriedWithoutSpendingTheBudget() async {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        var replies: [Result<[UInt8], ImpulseCarrierFailure>] = Array(repeating: networkFailure(), count: 8)
+        replies.append(.success([7]))
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: replies, delays: [:])
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: true,
+            counter: RequestServiceCounter(),
+            clock: clock
+        )
+        service.setRouteTransition(true)
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "upload.getFile"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.successValue, [7])
+        XCTAssertEqual(carrier.sentMethods().count, 9)
+        XCTAssertEqual(clock.waitedSeconds(), [])
+    }
+
+
+    /// A request cancelled while it waits for a login never sends, and it settles as canceled while a transition is open.
+    func testCancelledRequestSettlesAsCanceledDuringATransition() async throws {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: false, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: [networkFailure(), .success([7])], delays: [:])
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: false,
+            counter: RequestServiceCounter()
+        )
+        service.setRouteTransition(true)
+
+        let call: ImpulseRequestCall = service.submit(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions()
+        )
+        try await Task.sleep(nanoseconds: 50_000_000)
+        call.cancel()
+        let result: Result<[UInt8], ImpulseRequestFailure> = await call.result.value
+
+        XCTAssertEqual(result.failureValue, .canceled)
+        XCTAssertTrue(carrier.sentMethods().isEmpty)
+    }
+
+
+    /// Transition errors map to `routeChanged` only while a transition is open. The lost connection, a closed fleet, a
+    /// disconnected pool client and a media route change are the transition errors.
+    func testTransitionErrorsMapToRouteChangedOnlyDuringATransition() {
+        let network: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
+
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.routeChanged, routeTransition: true), .routeChanged)
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.closed, routeTransition: true), .routeChanged)
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.mainDisconnected, routeTransition: true), .routeChanged)
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: network, routeTransition: true), .routeChanged)
+
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.routeChanged, routeTransition: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.closed, routeTransition: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.mainDisconnected, routeTransition: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: network, routeTransition: false), .network(network))
+    }
+
+
+    /// Errors that are not transition errors keep their carrier failure, in and out of a transition.
+    func testOtherErrorsKeepTheirCarrierFailure() {
+        let network: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
+        let server: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 500, appType: "INTERNAL", metadata: [:])
+
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: server, routeTransition: true), .network(server))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: server, routeTransition: false), .network(server))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.queueFull, routeTransition: true), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.sessionEnded, routeTransition: true), .network(network))
+    }
+
+
     func testDownloadRetryLimitIsSixOrTenWithForceDownload() {
         let limitError: ImpulseRpcError = ImpulseRpcError(code: -123, text: "RETRY_LIMIT", temporary: false)
         let forced: ImpulseRequestOptions = ImpulseRequestOptions(forceDownload: true)

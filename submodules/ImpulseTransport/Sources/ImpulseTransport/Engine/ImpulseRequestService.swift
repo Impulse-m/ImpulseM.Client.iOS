@@ -91,6 +91,9 @@ public enum ImpulseRequestFailure: Error, Equatable, Sendable {
     case network(ImpulseCarrierFailure)
     /// The request was cancelled before it produced a reply.
     case canceled
+    /// The route changed while the call was in flight. The service retries such a call without spending its budget,
+    /// so this failure is never delivered to the caller.
+    case routeChanged
 }
 
 
@@ -218,6 +221,70 @@ public enum ImpulseRequestPolicy {
             text: ImpulseRequestPolicy.retryLimitText,
             temporary: false
         )
+    }
+
+
+    /// The failure of a call that ended with `error`. While a route transition is open (`routeTransition`), a lost
+    /// connection, a closed media fleet, a disconnected pool main client or a media route change is `routeChanged`, and
+    /// the service retries it without spending the budget. Every other error keeps its carrier failure.
+    public static func failure(
+        for error: Error,
+        routeTransition: Bool
+    ) -> ImpulseRequestFailure {
+        if routeTransition && ImpulseRequestPolicy.isTransitionFailure(error) {
+            return .routeChanged
+        }
+        return .network(ImpulseRequestPolicy.carrierFailure(from: error))
+    }
+
+
+    /// True for the errors a route change produces: the media route change and closed fleet, the disconnected pool main
+    /// client, and a carrier failure without a server answer (a lost connection).
+    private static func isTransitionFailure(_ error: Error) -> Bool {
+        if let mediaFailure: ImpulseMediaFailure = error as? ImpulseMediaFailure {
+            switch mediaFailure {
+            case .routeChanged, .closed:
+                return true
+
+            case .noConfig, .requestTooLarge, .queueFull, .carrier:
+                return false
+            }
+        }
+
+        if let poolFailure: ImpulsePoolFailure = error as? ImpulsePoolFailure {
+            switch poolFailure {
+            case .mainDisconnected:
+                return true
+
+            case .sessionEnded, .carrier:
+                return false
+            }
+        }
+
+        if let carrierResult: ImpulseCarrierFailure = error as? ImpulseCarrierFailure {
+            return carrierResult == ImpulseSdkFailure.networkFailure
+        }
+
+        return false
+    }
+
+
+    /// The carrier failure of any error a carrier or a fleet reports. A carrier failure keeps its codes; a media or pool
+    /// failure maps through its carrier; any other error maps through the SDK failure mapping.
+    private static func carrierFailure(from error: Error) -> ImpulseCarrierFailure {
+        if let carrierResult: ImpulseCarrierFailure = error as? ImpulseCarrierFailure {
+            return carrierResult
+        }
+
+        if let mediaFailure: ImpulseMediaFailure = error as? ImpulseMediaFailure {
+            return ImpulseMediaRequestCarrier.carrierFailure(from: mediaFailure)
+        }
+
+        if let poolFailure: ImpulsePoolFailure = error as? ImpulsePoolFailure {
+            return ImpulsePoolRequestCarrier.carrierFailure(from: poolFailure)
+        }
+
+        return ImpulseSdkFailure.carrierFailure(from: error)
     }
 }
 
@@ -360,6 +427,30 @@ internal final class ImpulseLoginGate: @unchecked Sendable {
 }
 
 
+/// Tells the service whether a route transition is open. The route owner opens it when the route changes and closes it
+/// once the connections are re-established on the new route.
+internal final class ImpulseRouteTransitionFlag: @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private var active: Bool = false
+
+
+    internal func setActive(_ value: Bool) {
+        self.lock.lock()
+        self.active = value
+        self.lock.unlock()
+    }
+
+
+    internal func isActive() -> Bool {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.active
+    }
+}
+
+
 /// Sends the requests of a connection. It chooses the carrier of each method, waits for a login when the request
 /// needs one, declares the connection, retries flood waits, server errors and network failures, refreshes a refused
 /// token once, and reports a 401 as an authorization failure. Requests submitted with a predecessor run after it has settled.
@@ -370,6 +461,7 @@ public final class ImpulseRequestService: Sendable {
     private let poolCarrier: any ImpulseRequestCarrier
     private let declarations: (any ImpulseDeclarationGate)?
     private let loginGate: ImpulseLoginGate
+    private let routeTransition: ImpulseRouteTransitionFlag
     private let onAuthorizationRequired: @Sendable () -> Void
     private let clock: any ImpulseRequestClock
     private static let notInitializedText: String = "CONNECTION_NOT_INITED"
@@ -411,6 +503,7 @@ public final class ImpulseRequestService: Sendable {
         self.poolCarrier = poolCarrier
         self.declarations = declarations
         self.loginGate = ImpulseLoginGate(isOpen: signedIn)
+        self.routeTransition = ImpulseRouteTransitionFlag()
         self.onAuthorizationRequired = onAuthorizationRequired
         self.clock = clock
     }
@@ -419,6 +512,13 @@ public final class ImpulseRequestService: Sendable {
     /// Reports a login or a session end. A login releases the requests that wait for one.
     public func setSignedIn(_ signedIn: Bool) {
         self.loginGate.setOpen(signedIn)
+    }
+
+
+    /// Reports that a route transition opened or closed. While it is open, a call that fails without a server answer
+    /// is retried at once without spending its budget, and it is never delivered with that failure.
+    public func setRouteTransition(_ active: Bool) {
+        self.routeTransition.setActive(active)
     }
 
 
@@ -532,6 +632,13 @@ public final class ImpulseRequestService: Sendable {
                     return .failure(.canceled)
                 }
                 guard let error: ImpulseRpcError = ImpulseCarrier.rpcError(from: failure, route: route) else {
+                    let transitionFailure: ImpulseRequestFailure = ImpulseRequestPolicy.failure(
+                        for: failure,
+                        routeTransition: self.routeTransition.isActive()
+                    )
+                    if case .routeChanged = transitionFailure {
+                        continue
+                    }
                     lastFailure = failure
                     if let ended: ImpulseRequestFailure = await self.waitAfterNetworkFailure(
                         method: request.method,

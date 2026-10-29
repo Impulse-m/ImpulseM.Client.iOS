@@ -419,7 +419,7 @@ final class ImpulseNetworkEngineSession: NetworkEngineSession {
             self.noteHeard()
             self.handleRpcFailure(entry, error: error)
 
-        case .failure(.network):
+        case .failure(.network), .failure(.routeChanged):
             self.finish(entry, outcome: .failure(NetworkEngineRequestFailure(error: ImpulseNetworkEngineFailures.networkFailure, info: self.responseInfo(entry))))
 
         case .failure(.canceled):
