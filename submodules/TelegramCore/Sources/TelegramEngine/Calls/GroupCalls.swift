@@ -1045,7 +1045,8 @@ func _internal_removeGroupCallBlockchainParticipants(account: Account, callId: I
 
 public struct JoinGroupCallAsScreencastResult {
     public var jsonParams: String
-    public var endpointId: String
+    /// The presentation endpoint of this connection. Nil when the answer does not carry it; the participant list then provides it.
+    public var endpointId: String?
 }
 
 func _internal_joinGroupCallAsScreencast(account: Account, callId: Int64, accessHash: Int64, joinPayload: String) -> Signal<JoinGroupCallAsScreencastResult, JoinGroupCallError> {
@@ -1056,6 +1057,13 @@ func _internal_joinGroupCallAsScreencast(account: Account, callId: Int64, access
     |> mapToSignal { updates -> Signal<JoinGroupCallAsScreencastResult, JoinGroupCallError> in
         account.stateManager.addUpdates(updates)
 
+        #if os(macOS)
+        return GroupCallLiveKitJoinParser.screencastJoinResult(
+            callId: callId,
+            selfPeerId: account.peerId,
+            updates: updates
+        )
+        #else
         var maybeParsedClientParams: String?
         loop: for update in updates.allUpdates {
             switch update {
@@ -1091,6 +1099,7 @@ func _internal_joinGroupCallAsScreencast(account: Account, callId: Int64, access
             jsonParams: parsedClientParams,
             endpointId: endpointId
         ))
+        #endif
     }
 }
 
