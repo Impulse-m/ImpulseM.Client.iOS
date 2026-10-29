@@ -259,6 +259,20 @@ http_archive(
     urls = ["https://github.com/XTLS/libXray/releases/download/v26.9.30/libxray-apple-cgo.zip"],
 )
 
+http_archive(
+    name = "livekit_webrtc_apple",
+    build_file = "//third-party/livekit:BUILD",
+    sha256 = "3b0aa4bee8d5596d6592b8d75bddc84391769849fd64c04b8e13c9e77ce6a82b",
+    urls = ["https://github.com/livekit/webrtc-xcframework/releases/download/150.7871.04/LiveKitWebRTC.xcframework.zip"],
+)
+
+http_archive(
+    name = "livekit_ffi_apple",
+    build_file = "//third-party/livekit:BUILD",
+    sha256 = "9c6fca694df24f1206897c5787c001120c27e03a2b28688af76c83ea79a45805",
+    urls = ["https://github.com/livekit/livekit-uniffi-xcframework/releases/download/0.13.1/RustLiveKitFFI.xcframework.zip"],
+)
+
 provisioning_profile_repository = use_extension("@build_bazel_rules_apple//apple:apple.bzl", "provisioning_profile_repository_extension")
 #provisioning_profile_repository.setup(
 #    fallback_profiles = "//path/to/some:filegroup", # Profiles to use if one isn't found locally
