@@ -58,12 +58,23 @@ public struct ExportedChatFolderLink: Equatable {
 
 public extension ExportedChatFolderLink {
     var slug: String {
-        var slug = self.link
-        if slug.hasPrefix("https://t.me/addlist/") {
-            slug = String(slug[slug.index(slug.startIndex, offsetBy: "https://t.me/addlist/".count)...])
-        }
-        return slug
+        return chatFolderInviteSlug(link: self.link)
     }
+}
+
+/// Extracts the invite slug from a folder invite link. The public prefix (the configured `me_url_prefix`
+/// host, or any other host) is stripped together with the `addlist/` path segment. A link without that
+/// segment after a URL prefix is returned unchanged.
+func chatFolderInviteSlug(link: String) -> String {
+    let marker: String = "addlist/"
+    guard let markerRange = link.range(of: marker) else {
+        return link
+    }
+    let prefix: Substring = link[link.startIndex ..< markerRange.lowerBound]
+    if !prefix.isEmpty && !prefix.hasSuffix("/") {
+        return link
+    }
+    return String(link[markerRange.upperBound...])
 }
 
 func _internal_exportChatFolder(account: Account, filterId: Int32, title: String, peerIds: [PeerId]) -> Signal<ExportedChatFolderLink, ExportChatFolderError> {
