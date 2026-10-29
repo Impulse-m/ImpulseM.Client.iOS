@@ -88,20 +88,51 @@ internal func urlWithoutFragment(_ url: URL) -> String {
 }
 
 
-/// The configuration of a pool's redirect session. It is a fresh ephemeral configuration: the application's session
+/// Where the redirect fetches of a pool take their transport settings: the configuration, and whether each fetch asks
+/// for it again (`perFetch`), so that a session made from a provider is current for every fetch.
+internal struct RpcPoolRedirectSource {
+    internal let configuration: () -> URLSessionConfiguration
+
+    internal let perFetch: Bool
+}
+
+
+/// The source of the redirect fetches. The pool's `urlSession` wins when it is set, and it is read once. Otherwise the
+/// main client's `urlSessionConfigurationProvider` is asked for each fetch. Otherwise the fetches use an ephemeral session.
+internal func redirectSource(
+    urlSession: URLSession?,
+    mainProvider: URLSessionConfigurationProvider?
+) -> RpcPoolRedirectSource {
+    if let given: URLSession = urlSession {
+        let fixed: URLSessionConfiguration = redirectSessionConfiguration(given.configuration)
+        return RpcPoolRedirectSource(configuration: { () -> URLSessionConfiguration in
+            return fixed
+        }, perFetch: false)
+    }
+    if let provider: URLSessionConfigurationProvider = mainProvider {
+        return RpcPoolRedirectSource(configuration: { () -> URLSessionConfiguration in
+            return redirectSessionConfiguration(provider())
+        }, perFetch: true)
+    }
+    return RpcPoolRedirectSource(configuration: { () -> URLSessionConfiguration in
+        return redirectSessionConfiguration(nil)
+    }, perFetch: false)
+}
+
+
+/// The configuration of a pool's redirect session. It is a fresh ephemeral configuration: the given configuration
 /// contributes only its transport settings (proxy, TLS, timeouts, URL protocol classes, waiting for connectivity).
 /// Its headers, cookies, stored credentials and cache are never copied, so an application header such as
 /// `Authorization` never reaches the host that a redirect names.
-internal func redirectSessionConfiguration(_ session: URLSession?) -> URLSessionConfiguration {
+internal func redirectSessionConfiguration(_ source: URLSessionConfiguration?) -> URLSessionConfiguration {
     let configuration: URLSessionConfiguration = URLSessionConfiguration.ephemeral
     configuration.httpCookieStorage = nil
     configuration.httpShouldSetCookies = false
     configuration.urlCredentialStorage = nil
     configuration.urlCache = nil
-    guard let given: URLSession = session else {
+    guard let source: URLSessionConfiguration = source else {
         return configuration
     }
-    let source: URLSessionConfiguration = given.configuration
     configuration.connectionProxyDictionary = source.connectionProxyDictionary
     if #available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *) {
         configuration.tlsMinimumSupportedProtocolVersion = source.tlsMinimumSupportedProtocolVersion
@@ -212,12 +243,34 @@ internal final class RpcPoolFetchDelegate: NSObject, URLSessionDataDelegate {
 
     private var bodies: [Int: RpcPoolFetchBody] = [:]
 
+    /// The main client's provider of the proxy's credentials, asked at each proxy challenge on the session's queue.
+    private let proxyCredentialsProvider: CentrifugeProxyCredentialsProvider?
+
+
+    internal init(proxyCredentialsProvider: CentrifugeProxyCredentialsProvider?) {
+        self.proxyCredentialsProvider = proxyCredentialsProvider
+        super.init()
+    }
+
 
     /// Registers the body of a task. Called before the task starts.
     internal func register(_ identifier: Int, _ body: RpcPoolFetchBody) {
         lock.lock()
         bodies[identifier] = body
         lock.unlock()
+    }
+
+
+    internal func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        let answer: (disposition: URLSession.AuthChallengeDisposition, credential: URLCredential?) = proxyChallengeAnswer(
+            challenge, provider: proxyCredentialsProvider
+        )
+        completionHandler(answer.disposition, answer.credential)
     }
 
 
@@ -345,27 +398,40 @@ internal final class RpcPoolFetches {
 
     private let limit: Int
 
-    private let configuration: URLSessionConfiguration
+    /// The transport settings of a session, asked when the session is made: once for the cached session, or for each
+    /// fetch with `perFetch`.
+    private let configuration: () -> URLSessionConfiguration
 
-    private let delegate: RpcPoolFetchDelegate = RpcPoolFetchDelegate()
+    private let perFetch: Bool
+
+    private let delegate: RpcPoolFetchDelegate
 
     private var session: URLSession? = nil
 
-    /// The fetches that hold a slot.
-    private var running: [RpcPoolFetch] = []
+    /// The fetches that hold a slot, by the call they serve. A call has at most one fetch.
+    private var running: [ObjectIdentifier: RpcPoolFetch] = [:]
 
-    /// The fetches that wait for a slot, in arrival order.
-    private var waiting: [RpcPoolFetch] = []
+    /// The fetches that wait for a slot, by the call they serve.
+    private var waiting: [ObjectIdentifier: RpcPoolFetch] = [:]
+
+    /// The waiting fetches in arrival order, from `waitingHead` on. A fetch that left the line stays here until the head
+    /// reaches it, or until the stale entries outnumber the live ones (compactWaitingIfNeeded); it is skipped then.
+    private var waitingOrder: [RpcPoolFetch] = []
+
+    private var waitingHead: Int = 0
 
 
     internal init(
         queue: DispatchQueue,
         limit: Int,
-        configuration: URLSessionConfiguration
+        source: RpcPoolRedirectSource,
+        proxyCredentialsProvider: CentrifugeProxyCredentialsProvider?
     ) {
         self.queue = queue
         self.limit = limit
-        self.configuration = configuration
+        self.configuration = source.configuration
+        self.perFetch = source.perFetch
+        self.delegate = RpcPoolFetchDelegate(proxyCredentialsProvider: proxyCredentialsProvider)
     }
 
 
@@ -392,27 +458,17 @@ internal final class RpcPoolFetches {
     }
 
 
-    /// The calls of the fetches that run or wait, for the pool's deadline timer.
-    internal var calls: [RpcPoolCall] {
-        var all: [RpcPoolCall] = []
-        for fetch: RpcPoolFetch in running {
-            all.append(fetch.call)
-        }
-        for fetch: RpcPoolFetch in waiting {
-            all.append(fetch.call)
-        }
-        return all
-    }
-
-
     /// Adds a fetch to the line, and starts the fetches that a free slot takes.
     internal func request(_ fetch: RpcPoolFetch) {
-        waiting.append(fetch)
+        let key: ObjectIdentifier = ObjectIdentifier(fetch.call)
+        waiting[key] = fetch
+        waitingOrder.append(fetch)
         startWaiting()
     }
 
 
-    /// Removes the fetch of a call, cancelling it when it runs. Returns false when the call has no fetch.
+    /// Removes the fetch of a call, cancelling it when it runs, and starts the waiting fetches that a slot takes. The
+    /// pool calls it when a fetch's deadline passes, so no fetch list is scanned for it. Returns false when the call has no fetch.
     internal func cancel(_ call: RpcPoolCall) -> Bool {
         if take(call) == nil {
             return false
@@ -422,41 +478,15 @@ internal final class RpcPoolFetches {
     }
 
 
-    /// Ends the fetches whose call deadline passed, cancelling those that run, and starts the waiting fetches that a
-    /// slot now takes. Returns the calls that expired.
-    internal func expire(now: UInt64) -> [RpcPoolCall] {
-        var expired: [RpcPoolCall] = []
-        var keptRunning: [RpcPoolFetch] = []
-        for fetch: RpcPoolFetch in running {
-            if fetch.call.deadline <= now {
-                fetch.task?.cancel()
-                expired.append(fetch.call)
-            } else {
-                keptRunning.append(fetch)
-            }
-        }
-        running = keptRunning
-        var keptWaiting: [RpcPoolFetch] = []
-        for fetch: RpcPoolFetch in waiting {
-            if fetch.call.deadline <= now {
-                expired.append(fetch.call)
-            } else {
-                keptWaiting.append(fetch)
-            }
-        }
-        waiting = keptWaiting
-        startWaiting()
-        return expired
-    }
-
-
     /// Cancels every fetch and ends the session. The pool settles the calls.
     internal func close() {
-        for fetch: RpcPoolFetch in running {
+        for fetch: RpcPoolFetch in running.values {
             fetch.task?.cancel()
         }
-        running = []
-        waiting = []
+        running = [:]
+        waiting = [:]
+        waitingOrder = []
+        waitingHead = 0
         session?.invalidateAndCancel()
         session = nil
     }
@@ -464,15 +494,12 @@ internal final class RpcPoolFetches {
 
     /// Removes the fetch of a call from either line. Returns it, or nil when the call has no fetch.
     private func take(_ call: RpcPoolCall) -> RpcPoolFetch? {
-        if let index: Int = waiting.firstIndex(where: { (candidate: RpcPoolFetch) -> Bool in
-            return candidate.call === call
-        }) {
-            return waiting.remove(at: index)
+        let key: ObjectIdentifier = ObjectIdentifier(call)
+        if let fetch: RpcPoolFetch = waiting.removeValue(forKey: key) {
+            compactWaitingIfNeeded()
+            return fetch
         }
-        if let index: Int = running.firstIndex(where: { (candidate: RpcPoolFetch) -> Bool in
-            return candidate.call === call
-        }) {
-            let fetch: RpcPoolFetch = running.remove(at: index)
+        if let fetch: RpcPoolFetch = running.removeValue(forKey: key) {
             fetch.task?.cancel()
             return fetch
         }
@@ -480,10 +507,51 @@ internal final class RpcPoolFetches {
     }
 
 
+    /// Takes the first fetch of the arrival order that still waits, or nil when none does.
+    private func popWaiting() -> RpcPoolFetch? {
+        while waitingHead < waitingOrder.count {
+            let candidate: RpcPoolFetch = waitingOrder[waitingHead]
+            waitingHead += 1
+            let key: ObjectIdentifier = ObjectIdentifier(candidate.call)
+            if waiting[key] === candidate {
+                waiting[key] = nil
+                // The consumed prefix is dropped once it is half of the array, so the array stays amortised O(1) per fetch.
+                if waitingHead >= 64 && waitingHead * 2 >= waitingOrder.count {
+                    waitingOrder.removeFirst(waitingHead)
+                    waitingHead = 0
+                }
+                return candidate
+            }
+        }
+        waitingOrder = []
+        waitingHead = 0
+        return nil
+    }
+
+
+    /// Drops the stale entries of the arrival order once they outnumber the waiting fetches twofold. The cost is linear in
+    /// the entries, and it runs after at least as many cancels as entries it drops, so it is amortised O(1) per cancel.
+    private func compactWaitingIfNeeded() {
+        let stored: Int = waitingOrder.count - waitingHead
+        if stored <= 2 * waiting.count + 64 {
+            return
+        }
+        var live: [RpcPoolFetch] = []
+        live.reserveCapacity(waiting.count)
+        for index: Int in waitingHead ..< waitingOrder.count {
+            let candidate: RpcPoolFetch = waitingOrder[index]
+            if waiting[ObjectIdentifier(candidate.call)] === candidate {
+                live.append(candidate)
+            }
+        }
+        waitingOrder = live
+        waitingHead = 0
+    }
+
+
     /// Starts the waiting fetches, in arrival order, while a slot is free.
     private func startWaiting() {
-        while running.count < limit && !waiting.isEmpty {
-            let fetch: RpcPoolFetch = waiting.removeFirst()
+        while running.count < limit, let fetch: RpcPoolFetch = popWaiting() {
             start(fetch)
         }
     }
@@ -500,24 +568,27 @@ internal final class RpcPoolFetches {
                 self?.completed(fetch, outcome)
             }
         }
-        let target: URLSession = currentSession()
+        // A per-fetch session is made for this fetch alone, from the configuration asked now, and ends once its task does.
+        let target: URLSession = perFetch ? makeSession() : currentSession()
         let task: URLSessionDataTask = target.dataTask(with: fetch.makeRequest())
         fetch.task = task
-        running.append(fetch)
+        running[ObjectIdentifier(fetch.call)] = fetch
         delegate.register(task.taskIdentifier, body)
         task.resume()
+        if perFetch {
+            target.finishTasksAndInvalidate()
+        }
     }
 
 
     /// The session reported the end of a fetch. A fetch that was taken out already (cancelled, expired, closed) is
     /// ignored. The call settles with the bytes, or with `replyError(code: 18)`.
     private func completed(_ fetch: RpcPoolFetch, _ outcome: Result<Data, RpcPoolRedirectFailure>) {
-        guard let index: Int = running.firstIndex(where: { (candidate: RpcPoolFetch) -> Bool in
-            return candidate === fetch
-        }) else {
+        let key: ObjectIdentifier = ObjectIdentifier(fetch.call)
+        guard running[key] === fetch else {
             return
         }
-        running.remove(at: index)
+        running[key] = nil
         startWaiting()
         switch outcome {
         case .success(let data):
@@ -533,10 +604,16 @@ internal final class RpcPoolFetches {
         if let existing: URLSession = session {
             return existing
         }
-        let operations: OperationQueue = OperationQueue()
-        operations.maxConcurrentOperationCount = 1
-        let created: URLSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: operations)
+        let created: URLSession = makeSession()
         session = created
         return created
+    }
+
+
+    /// A session for the fetches, with its callbacks on one serial queue of its own.
+    private func makeSession() -> URLSession {
+        let operations: OperationQueue = OperationQueue()
+        operations.maxConcurrentOperationCount = 1
+        return URLSession(configuration: configuration(), delegate: delegate, delegateQueue: operations)
     }
 }

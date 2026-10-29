@@ -26,8 +26,8 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     /// The configuration error of the options, or nil. A pool with one fails every call with it.
     private let configError: CentrifugeError?
 
-    /// The settings of each connection, from the pool's options.
-    private let connectionConfig: CentrifugeClientConfig
+    /// The settings of each connection: the pool's options, and the transport of the main client (see `init`).
+    internal let connectionConfig: CentrifugeClientConfig
 
     /// The redirect fetches of the pool: their slots, their line and their session.
     private let fetches: RpcPoolFetches
@@ -46,18 +46,40 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     /// The endpoints of the keys resolved so far. A key whose resolution came back empty is not kept.
     private var endpointsByKey: [String: [RpcPoolEndpoint]] = [:]
 
-    /// The waiting calls of each key, in admission order.
+    /// The waiting calls of each key, in admission order. An entry whose call no longer waits in the line is stale: it
+    /// stays until it reaches the front, or until the stale entries outnumber the live ones (compactLines).
     private var lines: [String: [RpcPoolCall]] = [:]
+
+    /// The calls that wait in a line, live. Counted toward `maxQueued` with the fetches that wait (queuedCount).
+    private var lineCount: Int = 0
+
+    /// The keys with calls in a line, and how many calls each has there. A key is in its endpoints' `lineKeys` while it counts.
+    private var keyLineCounts: [String: Int] = [:]
+
+    /// The stale entries of the lines: calls settled while they waited, still in an array.
+    private var staleLineEntries: Int = 0
+
+    /// The calls that wait for the timer: in a line, in a redirect fetch, or in a later resend's delay.
+    private var timedWaits: Int = 0
+
+    /// The attached connections of the endpoints, and the calls in flight on them. The stats snapshot reads them, so they
+    /// are kept as the connections attach and detach and the slots are taken and released, and the snapshot costs no scan.
+    private var connectionCount: Int = 0
+
+    private var inflightCount: Int = 0
 
     /// Every call that is not settled yet, so that `close` settles them all.
     private var unsettled: [ObjectIdentifier: RpcPoolCall] = [:]
 
-    /// The calls whose later resend waits for its delay. They join their line when the delay ends. They are not
-    /// counted toward `maxQueued` (queuedCount). A plain array on purpose: the scans over them stay short.
-    private var resendWaits: [RpcPoolCall] = []
-
     /// The one timer of the waiting calls' deadlines, the ends of the holds and the ends of the later resend delays.
     private var waitTimer: ClientDeadlineTimer = ClientDeadlineTimer()
+
+    /// The due moments of the waiting calls: the deadlines of the calls in a line or a redirect fetch, and the resend times
+    /// of the calls in the resend waits. The timer takes the due ones (waitTimerFired), so no event or fire scans them.
+    private var callDues: RpcMinHeap<RpcPoolDue> = RpcMinHeap()
+
+    /// The ends of the endpoint holds. The timer takes the earliest that still holds (earliestHold).
+    private var holdDues: RpcMinHeap<RpcPoolDue> = RpcMinHeap()
 
     private var closed: Bool = false
 
@@ -68,12 +90,18 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         self.main = main
         self.queue = main.syncQueue
         self.options = options
+        let mainConfig: CentrifugeClientConfig = main.config
         self.fetches = RpcPoolFetches(
             queue: main.syncQueue,
             limit: options.maxRedirectsInflight,
-            configuration: redirectSessionConfiguration(options.urlSession)
+            source: redirectSource(
+                urlSession: options.urlSession,
+                mainProvider: mainConfig.urlSessionConfigurationProvider
+            ),
+            proxyCredentialsProvider: mainConfig.proxyCredentialsProvider
         )
         self.configError = poolConfigurationError(options)
+            ?? poolTransportError(useNativeWebSocket: mainConfig.useNativeWebSocket, nativeAvailable: nativeWebSocketIsAvailable)
         var settings: CentrifugeClientConfig = CentrifugeClientConfig(
             timeout: options.timeout,
             headers: options.headers,
@@ -85,6 +113,13 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         )
         settings.token = options.token
         settings.tokenGetter = options.tokenGetter
+        // The transport of the main client, so that the pool's connections use its proxy, TLS and credentials. The
+        // providers are closures: each connection asks them itself, when it makes its session and at each challenge.
+        settings.useNativeWebSocket = mainConfig.useNativeWebSocket
+        settings.urlSessionConfigurationProvider = mainConfig.urlSessionConfigurationProvider
+        settings.proxyCredentialsProvider = mainConfig.proxyCredentialsProvider
+        settings.tlsSkipVerify = mainConfig.tlsSkipVerify
+        settings.tlsChallengeHandler = mainConfig.tlsChallengeHandler
         self.connectionConfig = settings
         if options.tokenFrom {
             // The source is made, stored on the main client and told of this pool on the main client's queue: the client
@@ -105,6 +140,12 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     /// - Throws: `CentrifugeError.configurationError` for an option that cannot work.
     public static func create(main: CentrifugeClient, options: CentrifugeRpcPoolOptions) throws -> CentrifugeRpcPool {
         if let error: CentrifugeError = poolConfigurationError(options) {
+            throw error
+        }
+        if let error: CentrifugeError = poolTransportError(
+            useNativeWebSocket: main.config.useNativeWebSocket,
+            nativeAvailable: nativeWebSocketIsAvailable
+        ) {
             throw error
         }
         return CentrifugeRpcPool(main: main, options: options)
@@ -154,6 +195,12 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             self.statsLock.unlock()
         }
         return self.statsSnapshot
+    }
+
+
+    /// The entries of the wait timer's due moments, standing or not. The tests read it on the pool's queue to bound them.
+    internal var dueEntryCount: Int {
+        return callDues.count
     }
 
 
@@ -211,8 +258,9 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         let timeout: TimeInterval = call.options.timeout ?? options.timeout
         call.deadline = main.clock.monotonicNanos() + clientNanos(timeout)
         unsettled[ObjectIdentifier(call)] = call
-        let line: [RpcPoolCall] = lines[call.endpointKey] ?? []
-        if line.isEmpty, let conn: RpcPoolConnection = liveConnection(endpoints) {
+        // The line counts its live calls only: a settled call that still has an entry in the line does not block a placement.
+        let lineIsEmpty: Bool = (keyLineCounts[call.endpointKey] ?? 0) == 0
+        if lineIsEmpty, let conn: RpcPoolConnection = liveConnection(endpoints) {
             place(call, on: conn)
             publishStats()
             return
@@ -222,7 +270,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             settle(call, .failure(CentrifugeError.replyError(code: rpcCodeLimitExceeded, message: "limit exceeded", temporary: false)))
             return
         }
-        lines[call.endpointKey, default: []].append(call)
+        joinLine(call, atFront: false)
         drain(call.endpointKey)
         publishStats()
     }
@@ -324,14 +372,22 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         let endpoints: [RpcPoolEndpoint] = endpointsByKey[key] ?? []
         retireStaleIdle(endpoints)
         while let head: RpcPoolCall = lines[key]?.first {
+            if head.wait != .line {
+                // A call settled while it waited: its entry is dropped here, as the stale entry it became.
+                removeHead(key)
+                staleLineEntries -= 1
+                continue
+            }
             let now: UInt64 = main.clock.monotonicNanos()
             if head.deadline <= now {
                 removeHead(key)
+                setWait(head, .idle)
                 settle(head, .failure(CentrifugeError.timeout))
                 continue
             }
             if let failure: CentrifugeError = waitingFailure(head, endpoints) {
                 removeHead(key)
+                setWait(head, .idle)
                 settle(head, .failure(failure))
                 continue
             }
@@ -431,7 +487,8 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     }
 
 
-    /// Drains every key line. Used when a connection or a hold changes.
+    /// Drains every key line. Used by the events that may change any endpoint: the main client's state or identity.
+    /// A connection event drains only the keys of its endpoint (drainEndpoint).
     private func drainAll() {
         for key: String in Array(lines.keys) {
             drain(key)
@@ -439,33 +496,24 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     }
 
 
+    /// Drains the keys with waiting calls that resolve to an endpoint. Only a state of that endpoint's connections or
+    /// holds can change their outcome, so the other keys are left as they are.
+    private func drainEndpoint(_ endpoint: RpcPoolEndpoint) {
+        for key: String in Array(endpoint.lineKeys) {
+            drain(key)
+        }
+    }
+
+
+    /// Drops the front entry of a key's line. The caller then sets the call's wait, which takes it out of the counts.
     private func removeHead(_ key: String) {
         lines[key]?.removeFirst()
     }
 
 
-    /// Removes a waiting call from its line. Returns false when the call is not in a line.
-    private func removeFromLine(_ call: RpcPoolCall) -> Bool {
-        guard var line: [RpcPoolCall] = lines[call.endpointKey] else {
-            return false
-        }
-        guard let index: Int = line.firstIndex(where: { (candidate: RpcPoolCall) -> Bool in
-            return candidate === call
-        }) else {
-            return false
-        }
-        line.remove(at: index)
-        if line.isEmpty {
-            lines[call.endpointKey] = nil
-        } else {
-            lines[call.endpointKey] = line
-        }
-        return true
-    }
-
-
     /// Sends a call on a connection. The call holds the connection's slot until the connection answers it.
     private func place(_ call: RpcPoolCall, on conn: RpcPoolConnection) {
+        setWait(call, .idle)
         let now: UInt64 = main.clock.monotonicNanos()
         var span: UInt64 = 0
         if call.deadline > now {
@@ -485,6 +533,9 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         call.endpointURL = conn.endpoint.url
         call.holdsSlot = true
         conn.inFlight += 1
+        if conn.attached {
+            inflightCount += 1
+        }
         let queue: DispatchQueue = self.queue
         let handle: CentrifugeRpcCall = conn.client.rpc(
             method: call.method,
@@ -503,6 +554,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     /// The answer of a connection to a call the pool placed. The slot is released first, so the settlement and the
     /// lines see the connection free.
     private func innerDone(_ call: RpcPoolCall, _ result: Result<CentrifugeRpcResult, Error>) {
+        let endpoint: RpcPoolEndpoint? = call.connection?.endpoint
         releaseSlot(call)
         switch result {
         case .success:
@@ -510,7 +562,11 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         case .failure(let error):
             answerFailed(call, error)
         }
-        drainAll()
+        // The freed slot drains the keys of its endpoint. A call that moved or resent joins the line of its new key.
+        if let freed: RpcPoolEndpoint = endpoint {
+            drainEndpoint(freed)
+        }
+        drain(call.endpointKey)
         publishStats()
     }
 
@@ -603,7 +659,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             settle(call, .failure(CentrifugeError.configurationError(message: "the endpoint key has no endpoint")))
             return
         }
-        lines[key, default: []].insert(call, at: 0)
+        joinLine(call, atFront: true)
     }
 
 
@@ -620,7 +676,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         }
         call.resends += 1
         call.connection = nil
-        lines[call.endpointKey, default: []].append(call)
+        joinLine(call, atFront: false)
     }
 
 
@@ -634,7 +690,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         call.resends += 1
         call.connection = nil
         call.resendAt = now + delay
-        resendWaits.append(call)
+        setWait(call, .resendWait)
         updateWaitTimer()
     }
 
@@ -646,6 +702,9 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         }
         call.holdsSlot = false
         conn.inFlight -= 1
+        if conn.attached {
+            inflightCount -= 1
+        }
         conn.lastUse = main.clock.monotonicNanos()
         if conn.inFlight == 0 {
             if endedSessionClosesIdle() && conn.lostCalls.isEmpty {
@@ -662,8 +721,14 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         guard call.settleOnce.claim() else {
             return
         }
+        if call.wait == .line {
+            // Its entry stays in the line until the front reaches it, so the line's stale count goes up.
+            staleLineEntries += 1
+        }
+        setWait(call, .idle)
         call.isSettled = true
         unsettled[ObjectIdentifier(call)] = nil
+        compactLinesIfNeeded()
         publishStats()
         call.completion(result)
     }
@@ -672,7 +737,8 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     /// Cancels a call. A waiting call leaves its line and fails at once. A call in flight fails at once too, and its
     /// connection call is cancelled, so the connection answers it now and releases the slot without a second completion.
     private func cancel(_ call: RpcPoolCall) {
-        if removeFromLine(call) || removeFromResendWaits(call) {
+        if call.wait == .line || call.wait == .resendWait {
+            // The call leaves its line or its resend wait lazily: its entry is dropped when it reaches the front.
             settle(call, .failure(cancelledCallError()))
             drain(call.endpointKey)
         } else {
@@ -682,16 +748,6 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             updateWaitTimer()
         }
         publishStats()
-    }
-
-
-    /// Removes a call from the resend wait list. Returns false when the call is not waiting there.
-    private func removeFromResendWaits(_ call: RpcPoolCall) -> Bool {
-        let before: Int = resendWaits.count
-        resendWaits.removeAll { (candidate: RpcPoolCall) -> Bool in
-            return candidate === call
-        }
-        return resendWaits.count != before
     }
 
 
@@ -707,7 +763,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             tokenSource: tokenSource
         )
         endpoint.holdUntil = nil
-        endpoint.connections.append(conn)
+        attachConnection(conn)
         conn.client.connect()
         armIdle(conn)
         publishStats()
@@ -722,7 +778,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         if conn.generation != currentGeneration() {
             // The identity moved on while it connected: the connection retires at this event.
             closeConnection(conn)
-            drainAll()
+            drainEndpoint(conn.endpoint)
             publishStats()
             return
         }
@@ -731,13 +787,13 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             // connection retires. The source's notice then places the waiting calls again.
             closeConnection(conn)
             source.markUnusable(conn.presentedToken)
-            drainAll()
+            drainEndpoint(conn.endpoint)
             publishStats()
             return
         }
         conn.linkState = .connected
         conn.endpoint.failures = 0
-        drainAll()
+        drainEndpoint(conn.endpoint)
         publishStats()
     }
 
@@ -754,7 +810,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         for call: RpcPoolCall in lost {
             resendLost(call)
         }
-        drainAll()
+        drainEndpoint(conn.endpoint)
         publishStats()
     }
 
@@ -768,9 +824,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         }
         conn.closed = true
         conn.idleTimer.cancel()
-        conn.endpoint.connections.removeAll { (candidate: RpcPoolConnection) -> Bool in
-            return candidate === conn
-        }
+        detachConnection(conn)
         let lost: [RpcPoolCall] = conn.lostCalls
         conn.lostCalls = []
         let repeatsLoss: Bool = code == disconnectCodeMessageSizeLimit || code == disconnectedCodeUnauthorized
@@ -788,7 +842,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
                 resendLost(call)
             }
         }
-        drainAll()
+        drainEndpoint(conn.endpoint)
         publishStats()
     }
 
@@ -803,7 +857,9 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             attempt: endpoint.failures - 1,
             random: main.random
         )
-        endpoint.holdUntil = main.clock.monotonicNanos() + delay
+        let until: UInt64 = main.clock.monotonicNanos() + delay
+        endpoint.holdUntil = until
+        holdDues.push(RpcPoolDue(nanos: until, call: nil, endpoint: endpoint))
         updateWaitTimer()
     }
 
@@ -840,7 +896,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             return
         }
         // A connection still connecting is not closed under the calls that wait for it: its idle span starts again.
-        if conn.linkState != .connected && callsWait(for: conn.endpoint) {
+        if conn.linkState != .connected && conn.endpoint.queuedWaits > 0 {
             conn.lastUse = now
             armIdle(conn)
             return
@@ -855,43 +911,36 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
     }
 
 
-    /// Whether a waiting call is in the line of a key that resolves to the endpoint.
-    private func callsWait(for endpoint: RpcPoolEndpoint) -> Bool {
-        for key: String in Array(lines.keys) {
-            guard let line: [RpcPoolCall] = lines[key], !line.isEmpty else {
-                continue
-            }
-            guard let endpoints: [RpcPoolEndpoint] = endpointsByKey[key] else {
-                continue
-            }
-            if endpoints.contains(where: { (candidate: RpcPoolEndpoint) -> Bool in
-                return candidate === endpoint
-            }) {
-                return true
-            }
-        }
-        for call: RpcPoolCall in resendWaits {
-            guard let endpoints: [RpcPoolEndpoint] = endpointsByKey[call.endpointKey] else {
-                continue
-            }
-            if endpoints.contains(where: { (candidate: RpcPoolEndpoint) -> Bool in
-                return candidate === endpoint
-            }) {
-                return true
-            }
-        }
-        return false
-    }
-
-
     /// Closes one connection the pool chose to close (idle). It leaves its endpoint at once.
     private func closeConnection(_ conn: RpcPoolConnection) {
         conn.closed = true
         conn.idleTimer.cancel()
+        detachConnection(conn)
+        conn.client.disconnect()
+    }
+
+
+    /// Adds a connection to its endpoint, and counts it in the stats totals.
+    private func attachConnection(_ conn: RpcPoolConnection) {
+        conn.endpoint.connections.append(conn)
+        conn.attached = true
+        connectionCount += 1
+        inflightCount += conn.inFlight
+    }
+
+
+    /// Removes a connection from its endpoint, and takes it and its calls in flight out of the stats totals. A connection
+    /// that is not attached is left as it is, so a second removal changes no count.
+    private func detachConnection(_ conn: RpcPoolConnection) {
+        guard conn.attached else {
+            return
+        }
+        conn.attached = false
         conn.endpoint.connections.removeAll { (candidate: RpcPoolConnection) -> Bool in
             return candidate === conn
         }
-        conn.client.disconnect()
+        connectionCount -= 1
+        inflightCount -= conn.inFlight
     }
 
 
@@ -963,6 +1012,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
         ) { [weak self] (result: Result<CentrifugeRpcResult, Error>) -> Void in
             self?.fetchSettled(call, result)
         }
+        setWait(call, .fetch)
         fetches.request(fetch)
         publishStats()
         updateWaitTimer()
@@ -981,33 +1031,220 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
 
     /// Keeps the deadline timer at the earliest moment that wakes the pool: the deadline of a waiting call, the end of
     /// a hold while a call waits, or the end of a later resend's delay. A moment already past is kept too: the timer
-    /// then runs at once and moves the due calls on, so no due call is left waiting for another event.
+    /// then runs at once and moves the due calls on, so no due call is left waiting for another event. The earliest
+    /// moment is read from the heaps, so an event costs no scan of the calls, the lines, the holds or the fetches.
     private func updateWaitTimer() {
         let now: UInt64 = main.clock.monotonicNanos()
-        var earliest: UInt64? = nil
-        for line: [RpcPoolCall] in lines.values {
-            for call: RpcPoolCall in line {
-                earliest = earlierNanos(earliest, call.deadline)
-            }
-        }
-        if !lines.isEmpty {
-            for endpoint: RpcPoolEndpoint in endpointsByURL.values {
-                if let until: UInt64 = endpoint.holdUntil, until > now {
-                    earliest = earlierNanos(earliest, until)
-                }
-            }
-        }
-        for call: RpcPoolCall in resendWaits {
-            earliest = earlierNanos(earliest, call.resendAt)
-        }
-        for call: RpcPoolCall in fetches.calls {
-            earliest = earlierNanos(earliest, call.deadline)
+        var earliest: UInt64? = earliestCallDue()
+        // The holds are pruned on every call, and they wake the timer only while a call waits in a line.
+        let hold: UInt64? = earliestHold(now: now)
+        if lineCount > 0, let until: UInt64 = hold {
+            earliest = earlierNanos(earliest, until)
         }
         // The timer holds the pool strongly while a call waits, so a pool the app released still settles its waiting
         // calls at their deadlines. The timer is cancelled when nothing waits, which ends the reference.
         waitTimer.rearm(at: earliest, on: main, lateGrace: true) { () -> Void in
             self.waitTimerFired()
         }
+    }
+
+
+    /// Adds a call to the line of its key, at the back or at the front, and puts its deadline on the timer.
+    private func joinLine(_ call: RpcPoolCall, atFront: Bool) {
+        setWait(call, .line)
+        if atFront {
+            lines[call.endpointKey, default: []].insert(call, at: 0)
+        } else {
+            lines[call.endpointKey, default: []].append(call)
+        }
+    }
+
+
+    /// Sets where a call waits, and puts the moment that the wait is due at on the timer: the deadline in a line or a
+    /// redirect fetch, the resend time in the resend waits, and nothing otherwise. The counts of the old wait are
+    /// taken out and those of the new one are added, so every count stays the number of calls in that wait.
+    private func setWait(_ call: RpcPoolCall, _ wait: RpcPoolWait) {
+        countOut(call)
+        call.wait = wait
+        countIn(call)
+        switch wait {
+        case .line, .fetch:
+            callDues.push(RpcPoolDue(nanos: call.deadline, call: call, endpoint: nil))
+        case .resendWait:
+            callDues.push(RpcPoolDue(nanos: call.resendAt, call: call, endpoint: nil))
+        case .idle:
+            return
+        }
+        compactCallDuesIfNeeded()
+    }
+
+
+    /// Takes a call out of the counts of the wait it is in. A call in a line keeps its entry in the line's array: the
+    /// caller that removes the entry at the front, or the compaction, drops it.
+    private func countOut(_ call: RpcPoolCall) {
+        switch call.wait {
+        case .idle:
+            return
+        case .line:
+            lineCount -= 1
+            timedWaits -= 1
+            adjustEndpoints(call.endpointKey, by: -1)
+            dropKeyLine(call.endpointKey)
+        case .resendWait:
+            timedWaits -= 1
+            adjustEndpoints(call.endpointKey, by: -1)
+        case .fetch:
+            timedWaits -= 1
+        }
+    }
+
+
+    /// Adds a call to the counts of the wait it is in.
+    private func countIn(_ call: RpcPoolCall) {
+        switch call.wait {
+        case .idle:
+            return
+        case .line:
+            lineCount += 1
+            timedWaits += 1
+            adjustEndpoints(call.endpointKey, by: 1)
+            addKeyLine(call.endpointKey)
+        case .resendWait:
+            timedWaits += 1
+            adjustEndpoints(call.endpointKey, by: 1)
+        case .fetch:
+            timedWaits += 1
+        }
+    }
+
+
+    /// Adds `delta` to the queued waits of the endpoints that a key resolves to.
+    private func adjustEndpoints(_ key: String, by delta: Int) {
+        guard let endpoints: [RpcPoolEndpoint] = endpointsByKey[key] else {
+            return
+        }
+        for endpoint: RpcPoolEndpoint in endpoints {
+            endpoint.queuedWaits += delta
+        }
+    }
+
+
+    /// Counts one more call in the line of a key. The first one puts the key on its endpoints.
+    private func addKeyLine(_ key: String) {
+        let count: Int = (keyLineCounts[key] ?? 0) + 1
+        keyLineCounts[key] = count
+        if count == 1, let endpoints: [RpcPoolEndpoint] = endpointsByKey[key] {
+            for endpoint: RpcPoolEndpoint in endpoints {
+                endpoint.lineKeys.insert(key)
+            }
+        }
+    }
+
+
+    /// Counts one call less in the line of a key. The last one takes the key off its endpoints.
+    private func dropKeyLine(_ key: String) {
+        let count: Int = (keyLineCounts[key] ?? 1) - 1
+        if count > 0 {
+            keyLineCounts[key] = count
+            return
+        }
+        keyLineCounts[key] = nil
+        if let endpoints: [RpcPoolEndpoint] = endpointsByKey[key] {
+            for endpoint: RpcPoolEndpoint in endpoints {
+                endpoint.lineKeys.remove(key)
+            }
+        }
+    }
+
+
+    /// Drops the stale entries of the lines once they outnumber the live calls twofold. The cost is linear in the
+    /// entries, and it runs after at least as many settlements as entries it drops, so it is amortised O(1) per settlement.
+    private func compactLinesIfNeeded() {
+        if closed || staleLineEntries <= 2 * lineCount {
+            return
+        }
+        var kept: [String: [RpcPoolCall]] = [:]
+        for entry: (key: String, value: [RpcPoolCall]) in lines {
+            let live: [RpcPoolCall] = entry.value.filter { (candidate: RpcPoolCall) -> Bool in
+                return candidate.wait == .line
+            }
+            if !live.isEmpty {
+                kept[entry.key] = live
+            }
+        }
+        lines = kept
+        staleLineEntries = 0
+    }
+
+
+    /// Drops the entries of the due moments that no longer stand once they outnumber the timed waits twofold, so the
+    /// heap holds about one entry per waiting call. A call that returns to a line or a fetch with the same deadline
+    /// leaves its earlier entry standing, so only the first entry of each call and moment is kept. The kept entries
+    /// are at most the timed waits, so the cost is linear in the heap, and amortised O(1) per entry added.
+    private func compactCallDuesIfNeeded() {
+        if closed || callDues.count <= 2 * timedWaits {
+            return
+        }
+        var kept: Set<RpcPoolDueKey> = []
+        callDues.keep { (due: RpcPoolDue) -> Bool in
+            guard let call: RpcPoolCall = due.call, self.isStandingCallDue(due) else {
+                return false
+            }
+            return kept.insert(RpcPoolDueKey(call: ObjectIdentifier(call), nanos: due.nanos)).inserted
+        }
+    }
+
+
+    /// The earliest moment of the calls that stands, or nil when none does. The entries that do not stand are dropped
+    /// from the front: the front of a heap is its earliest entry, so the first one that stands is the answer.
+    private func earliestCallDue() -> UInt64? {
+        while let due: RpcPoolDue = callDues.earliest, !isStandingCallDue(due) {
+            callDues.pop()
+        }
+        return callDues.earliest?.nanos
+    }
+
+
+    /// The earliest end of a hold, or nil when none is. A superseded entry is dropped from the front on every call. An
+    /// ended hold is dropped too while no call waits; while one waits, it stays at the front, so the timer runs at once
+    /// and waitTimerFired drains the keys of its endpoint.
+    private func earliestHold(now: UInt64) -> UInt64? {
+        while let due: RpcPoolDue = holdDues.earliest {
+            if !isCurrentHold(due) {
+                holdDues.pop()
+            } else if lineCount == 0 && due.nanos <= now {
+                holdDues.pop()
+            } else {
+                break
+            }
+        }
+        return holdDues.earliest?.nanos
+    }
+
+
+    /// Whether the entry of a call stands: the call is unsettled, and it waits in the state that set the entry.
+    private func isStandingCallDue(_ due: RpcPoolDue) -> Bool {
+        guard let call: RpcPoolCall = due.call, !call.isSettled else {
+            return false
+        }
+        switch call.wait {
+        case .line, .fetch:
+            return due.nanos == call.deadline
+        case .resendWait:
+            return due.nanos == call.resendAt
+        case .idle:
+            return false
+        }
+    }
+
+
+    /// Whether the entry of a hold is the current one: its endpoint still holds until that moment. An entry of an earlier
+    /// hold of the endpoint is superseded.
+    private func isCurrentHold(_ due: RpcPoolDue) -> Bool {
+        guard let endpoint: RpcPoolEndpoint = due.endpoint, let until: UInt64 = endpoint.holdUntil else {
+            return false
+        }
+        return until == due.nanos
     }
 
 
@@ -1019,74 +1256,65 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             return
         }
         let now: UInt64 = main.clock.monotonicNanos()
+        // The due moments of the calls, earliest first. Only the entries that are due are taken from the heap.
         var expired: [RpcPoolCall] = []
-        for key: String in Array(lines.keys) {
-            var kept: [RpcPoolCall] = []
-            for call: RpcPoolCall in lines[key] ?? [] {
-                if call.deadline <= now {
-                    expired.append(call)
-                } else {
-                    kept.append(call)
-                }
+        var resumed: [RpcPoolCall] = []
+        while let due: RpcPoolDue = callDues.earliest, due.nanos <= now {
+            callDues.pop()
+            guard let call: RpcPoolCall = due.call, isStandingCallDue(due) else {
+                continue
             }
-            if kept.isEmpty {
-                lines[key] = nil
+            // A resend whose delay ends at or after the deadline is not sent: its call times out.
+            if call.wait == .resendWait && call.deadline > now {
+                resumed.append(call)
             } else {
-                lines[key] = kept
-            }
-        }
-        var stillWaiting: [RpcPoolCall] = []
-        var due: [RpcPoolCall] = []
-        for call: RpcPoolCall in resendWaits {
-            if call.resendAt <= now {
-                due.append(call)
-            } else {
-                stillWaiting.append(call)
-            }
-        }
-        resendWaits = stillWaiting
-        // A resend whose delay ends at or after the deadline is not sent: its call times out.
-        for call: RpcPoolCall in due {
-            if call.deadline <= now {
                 expired.append(call)
-            } else {
-                lines[call.endpointKey, default: []].append(call)
             }
         }
-        expired.append(contentsOf: fetches.expire(now: now))
+        // The holds that ended: their keys are drained below, so a call that waits on the endpoint opens its connection.
+        var endedEndpoints: [RpcPoolEndpoint] = []
+        while let hold: RpcPoolDue = holdDues.earliest, hold.nanos <= now {
+            holdDues.pop()
+            if isCurrentHold(hold), let endpoint: RpcPoolEndpoint = hold.endpoint {
+                endedEndpoints.append(endpoint)
+            }
+        }
+        var keys: [String] = []
+        for call: RpcPoolCall in resumed where call.wait == .resendWait {
+            joinLine(call, atFront: false)
+            keys.append(call.endpointKey)
+        }
         for call: RpcPoolCall in expired {
+            keys.append(call.endpointKey)
+            if call.wait == .fetch {
+                _ = fetches.cancel(call)
+            }
             settle(call, .failure(CentrifugeError.timeout))
         }
-        drainAll()
+        for endpoint: RpcPoolEndpoint in endedEndpoints {
+            keys.append(contentsOf: endpoint.lineKeys)
+        }
+        for key: String in keys {
+            drain(key)
+        }
         updateWaitTimer()
     }
 
 
     /// The calls that wait for a slot in a line, and the redirect fetches that wait for a slot. A later resend
     /// that waits for its delay is not counted: `maxQueued` bounds fresh calls only (spec C 2.3), so a resend is
-    /// never refused by it.
+    /// never refused by it. Both counts are kept as calls join and leave, so the sum is O(1).
     private func queuedCount() -> Int {
-        var total: Int = fetches.waitingCount
-        for line: [RpcPoolCall] in lines.values {
-            total += line.count
-        }
-        return total
+        return fetches.waitingCount + lineCount
     }
 
 
-    /// Writes the stats snapshot. Called on the queue after each change of the pool's state.
+    /// Writes the stats snapshot. Called on the queue after each change of the pool's state. The totals are kept as the
+    /// state changes, so the snapshot costs no scan of the endpoints or the connections.
     private func publishStats() {
-        var connections: Int = 0
-        var inflight: Int = 0
-        for endpoint: RpcPoolEndpoint in endpointsByURL.values {
-            for conn: RpcPoolConnection in endpoint.connections {
-                connections += 1
-                inflight += conn.inFlight
-            }
-        }
         let snapshot: CentrifugeRpcPoolStats = CentrifugeRpcPoolStats(
-            connections: connections,
-            inflight: inflight,
+            connections: connectionCount,
+            inflight: inflightCount,
             queued: queuedCount(),
             redirects: fetches.runningCount
         )
@@ -1108,6 +1336,7 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             endpoint.holdUntil = nil
             for conn: RpcPoolConnection in endpoint.connections {
                 conn.closed = true
+                conn.attached = false
                 // The lost calls of the connection are settled below with the rest; the connection keeps no reference.
                 conn.lostCalls = []
                 conn.idleTimer.cancel()
@@ -1115,11 +1344,10 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
             }
             endpoint.connections = []
         }
-        endpointsByURL = [:]
-        endpointsByKey = [:]
-        lines = [:]
-        resendWaits = []
+        connectionCount = 0
+        inflightCount = 0
         fetches.close()
+        // The calls settle while the keys and the counts are kept, so each one leaves its wait as it settles.
         for call: RpcPoolCall in Array(unsettled.values) {
             if call.connection == nil {
                 settle(call, .failure(cancelledCallError()))
@@ -1127,6 +1355,15 @@ public final class CentrifugeRpcPool: RpcPoolMainListener {
                 settle(call, .failure(CentrifugeError.connectionClosed))
             }
         }
+        endpointsByURL = [:]
+        endpointsByKey = [:]
+        lines = [:]
+        keyLineCounts = [:]
+        lineCount = 0
+        staleLineEntries = 0
+        timedWaits = 0
+        callDues = RpcMinHeap()
+        holdDues = RpcMinHeap()
         publishStats()
     }
 }
