@@ -617,6 +617,39 @@ public enum JoinGroupCallError {
     case anonymousNotAllowed
     case tooManyParticipants
     case invalidJoinAsPeer
+    case ssrcDuplicateMuch
+}
+
+public enum CheckGroupCallError {
+    case invalid
+    case badRequest
+    case generic
+}
+
+enum GroupCallRpcErrorMapping {
+    static func checkError(errorCode: Int32, errorDescription: String) -> CheckGroupCallError {
+        if errorDescription == "GROUPCALL_INVALID" {
+            return .invalid
+        } else if errorCode == 400 {
+            return .badRequest
+        } else {
+            return .generic
+        }
+    }
+
+    static func isSsrcDuplicateMuch(errorDescription: String) -> Bool {
+        return errorDescription == "GROUPCALL_SSRC_DUPLICATE_MUCH"
+    }
+
+    static func mapCheckResult(_ signal: Signal<[Int32], MTRpcError>) -> Signal<[UInt32], CheckGroupCallError> {
+        return signal
+        |> mapError { error -> CheckGroupCallError in
+            return GroupCallRpcErrorMapping.checkError(errorCode: error.errorCode, errorDescription: error.errorDescription)
+        }
+        |> map { result -> [UInt32] in
+            return result.map(UInt32.init(bitPattern:))
+        }
+    }
 }
 
 public struct JoinGroupCallResult {
@@ -743,6 +776,8 @@ func _internal_joinGroupCall(account: Account, peerId: PeerId?, joinAs: PeerId?,
                     }
                     |> castError(InternalJoinError.self)
                     |> switchToLatest
+                } else if GroupCallRpcErrorMapping.isSsrcDuplicateMuch(errorDescription: error.errorDescription) {
+                    return .fail(.error(.ssrcDuplicateMuch))
                 } else if error.errorDescription.hasPrefix("CONF_WRITE_CHAIN_INVALID") {
                     return .fail(.restart)
                 } else {
@@ -1058,7 +1093,10 @@ public struct JoinGroupCallAsScreencastResult {
 
 func _internal_joinGroupCallAsScreencast(account: Account, callId: Int64, accessHash: Int64, joinPayload: String) -> Signal<JoinGroupCallAsScreencastResult, JoinGroupCallError> {
     return account.network.request(Api.functions.phone.joinGroupCallPresentation(call: .inputGroupCall(.init(id: callId, accessHash: accessHash)), params: .dataJSON(.init(data: joinPayload))))
-    |> mapError { _ -> JoinGroupCallError in
+    |> mapError { error -> JoinGroupCallError in
+        if GroupCallRpcErrorMapping.isSsrcDuplicateMuch(errorDescription: error.errorDescription) {
+            return .ssrcDuplicateMuch
+        }
         return .generic
     }
     |> mapToSignal { updates -> Signal<JoinGroupCallAsScreencastResult, JoinGroupCallError> in
@@ -1198,6 +1236,11 @@ func _internal_checkGroupCall(account: Account, callId: Int64, accessHash: Int64
     |> map { result -> [UInt32] in
         return result.map(UInt32.init(bitPattern:))
     }
+}
+
+func _internal_checkGroupCallWithError(account: Account, callId: Int64, accessHash: Int64, ssrcs: [UInt32]) -> Signal<[UInt32], CheckGroupCallError> {
+    let request: Signal<[Int32], MTRpcError> = account.network.request(Api.functions.phone.checkGroupCall(call: .inputGroupCall(.init(id: callId, accessHash: accessHash)), sources: ssrcs.map(Int32.init(bitPattern:))))
+    return GroupCallRpcErrorMapping.mapCheckResult(request)
 }
 
 private func binaryInsertionIndex(_ inputArr: [GroupCallParticipantsContext.Participant], searchItem: Int32) -> Int {

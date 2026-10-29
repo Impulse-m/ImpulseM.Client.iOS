@@ -82,6 +82,10 @@ public extension TelegramEngine {
             return _internal_checkGroupCall(account: account, callId: callId, accessHash: accessHash, ssrcs: ssrcs)
         }
 
+        public func checkGroupCallWithError(callId: Int64, accessHash: Int64, ssrcs: [UInt32]) -> Signal<[UInt32], CheckGroupCallError> {
+            return _internal_checkGroupCallWithError(account: self.account, callId: callId, accessHash: accessHash, ssrcs: ssrcs)
+        }
+
         public func inviteToGroupCall(callId: Int64, accessHash: Int64, peerId: PeerId) -> Signal<Never, InviteToGroupCallError> {
             return _internal_inviteToGroupCall(account: self.account, callId: callId, accessHash: accessHash, peerId: peerId)
         }
