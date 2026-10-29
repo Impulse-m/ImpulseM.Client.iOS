@@ -196,6 +196,10 @@ public final class LiveKitGroupCallContext {
     public var onStateChanged: ((LiveKitGroupCallState) -> Void)?
     public private(set) var isPresentationActive: Bool = false
     public var onPresentationStateChanged: ((Bool) -> Void)?
+    /// Whether the local microphone is muted. The microphone is muted at first, as on Android, unless the call starts unmuted.
+    public private(set) var isMuted: Bool
+    public var onMutedChanged: ((Bool) -> Void)?
+    public private(set) var isNoiseSuppressionEnabled: Bool = AudioCaptureOptions.defaultNoiseSuppression
 
     /// The video endpoints of the other participants, read from the participant list.
     public var remoteEndpoints: Set<String> {
@@ -229,20 +233,22 @@ public final class LiveKitGroupCallContext {
     private var pollTask: Task<Void, Never>?
     private var presentationTrack: LiveKitLocalVideoTrack?
     private var cameraTrack: LiveKitLocalVideoTrack?
-    private var cameraOperation: Task<Void, Never>?
+    private var mediaOperation: Task<Void, Never>?
 
 
     public convenience init(
         callId: Int64,
         joinRequest: @escaping LiveKitGroupJoinFunction,
         checkRequest: @escaping LiveKitGroupCheckFunction,
-        leavePresentationRequest: @escaping LiveKitGroupLeaveFunction
+        leavePresentationRequest: @escaping LiveKitGroupLeaveFunction,
+        initialMuted: Bool = true
     ) {
         self.init(
             callId: callId,
             joinRequest: joinRequest,
             checkRequest: checkRequest,
             leavePresentationRequest: leavePresentationRequest,
+            initialMuted: initialMuted,
             pollIntervalSeconds: LiveKitGroupCallContext.pollIntervalSeconds,
             nextSource: LiveKitGroupCallContext.randomSource,
             makeSession: LiveKitGroupCallContext.makeSDKSession
@@ -255,6 +261,7 @@ public final class LiveKitGroupCallContext {
         joinRequest: @escaping LiveKitGroupJoinFunction,
         checkRequest: @escaping LiveKitGroupCheckFunction,
         leavePresentationRequest: @escaping LiveKitGroupLeaveFunction,
+        initialMuted: Bool = true,
         pollIntervalSeconds: TimeInterval,
         nextSource: @escaping () -> UInt32,
         makeSession: @escaping LiveKitGroupRoomSessionFactory
@@ -263,6 +270,7 @@ public final class LiveKitGroupCallContext {
         self.joinRequest = joinRequest
         self.checkRequest = checkRequest
         self.leavePresentationRequest = leavePresentationRequest
+        self.isMuted = initialMuted
         self.pollIntervalSeconds = pollIntervalSeconds
         self.nextSource = nextSource
         self.makeSession = makeSession
@@ -329,7 +337,7 @@ public final class LiveKitGroupCallContext {
             return
         }
         cameraTrack = track
-        enqueueCameraOperation(publishCurrentCamera)
+        enqueueMediaOperation(publishCurrentCamera)
     }
 
 
@@ -339,7 +347,29 @@ public final class LiveKitGroupCallContext {
             return
         }
         cameraTrack = nil
-        enqueueCameraOperation(muteCurrentCamera)
+        enqueueMediaOperation(muteCurrentCamera)
+    }
+
+
+    /// Mutes or unmutes the local microphone. The mute is applied at once when the main connection is joined,
+    /// and on connect otherwise.
+    public func setMuted(_ muted: Bool) {
+        guard !isEnded, isMuted != muted else {
+            return
+        }
+        isMuted = muted
+        onMutedChanged?(muted)
+        enqueueMediaOperation(applyMicrophone)
+    }
+
+
+    /// Turns the noise suppression of the microphone on or off. The setting is kept across rejoins.
+    public func setNoiseSuppressionEnabled(_ enabled: Bool) {
+        guard !isEnded, isNoiseSuppressionEnabled != enabled else {
+            return
+        }
+        isNoiseSuppressionEnabled = enabled
+        enqueueMediaOperation(applyNoiseSuppression)
     }
 
 
@@ -508,7 +538,8 @@ public final class LiveKitGroupCallContext {
             setState(.connected)
         }
         startPolling()
-        enqueueCameraOperation(publishCurrentCamera)
+        enqueueMediaOperation(applyMainAudio)
+        enqueueMediaOperation(publishCurrentCamera)
     }
 
 
@@ -683,23 +714,72 @@ public final class LiveKitGroupCallContext {
     }
 
 
-    /// Runs camera operations one after another, so a publish and a mute never overlap.
-    private func enqueueCameraOperation(_ operation: @escaping @MainActor () async -> Void) {
-        let previous: Task<Void, Never>? = cameraOperation
-        cameraOperation = Task { @MainActor in
+    /// Runs media operations of the main room one after another, so a publish, a mute and a setting change never overlap.
+    private func enqueueMediaOperation(_ operation: @escaping @MainActor () async -> Void) {
+        let previous: Task<Void, Never>? = mediaOperation
+        mediaOperation = Task { @MainActor in
             await previous?.value
             await operation()
         }
     }
 
 
+    /// Applies the noise suppression and then the mute of the main microphone, when the main connection is joined.
+    /// The noise setting goes first, so a microphone published now captures with the current setting.
+    private func applyMainAudio() async {
+        await applyNoiseSuppression()
+        await applyMicrophone()
+    }
+
+
+    /// Applies the mute of the main microphone. A microphone that cannot be published ends the call, as on Android.
+    private func applyMicrophone() async {
+        guard mainSource != 0, !isEnded, let media: LiveKitRoomMedia = mainMedia else {
+            return
+        }
+        let generation: Int = mainGeneration
+        let isEnabled: Bool = !isMuted
+        do {
+            try await media.setMicrophoneEnabled(isEnabled)
+        } catch {
+            if generation == mainGeneration {
+                end(.connectionFailed)
+            }
+        }
+    }
+
+
+    /// Applies the noise suppression setting to the main microphone, when the main connection is joined.
+    private func applyNoiseSuppression() async {
+        guard mainSource != 0, !isEnded, let media: LiveKitRoomMedia = mainMedia else {
+            return
+        }
+        let generation: Int = mainGeneration
+        let isEnabled: Bool = isNoiseSuppressionEnabled
+        do {
+            try await media.setNoiseSuppressionEnabled(isEnabled)
+        } catch {
+            if generation == mainGeneration {
+                end(.connectionFailed)
+            }
+        }
+    }
+
+
     /// Publishes the current camera track into the main room, when the main connection is joined.
+    /// A camera that cannot be published ends the call, as on Android.
     private func publishCurrentCamera() async {
         guard let track: LiveKitLocalVideoTrack = cameraTrack, mainSource != 0, let media: LiveKitRoomMedia = mainMedia else {
             return
         }
-        // A camera that cannot be published leaves the call without video. The call itself stays up.
-        try? await media.publishCamera(track)
+        let generation: Int = mainGeneration
+        do {
+            try await media.publishCamera(track)
+        } catch {
+            if generation == mainGeneration {
+                end(.connectionFailed)
+            }
+        }
     }
 
 

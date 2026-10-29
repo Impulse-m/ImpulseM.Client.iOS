@@ -895,4 +895,128 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         XCTAssertEqual(backend.joins.count, 2)
         context.stop()
     }
+
+
+    func testMicrophoneIsPublishedMutedByDefault() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        XCTAssertTrue(context.isMuted)
+        context.start()
+        let published: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setMicrophoneEnabled(false))
+        }
+        XCTAssertTrue(published)
+        XCTAssertFalse(media.calls.contains(.setMicrophoneEnabled(true)))
+        XCTAssertTrue(context.isMuted)
+        context.stop()
+    }
+
+
+    func testMuteSetBeforeConnectAppliesOnConnect() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.setMuted(false)
+        XCTAssertFalse(context.isMuted)
+        XCTAssertTrue(media.calls.isEmpty)
+        context.start()
+        let published: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setMicrophoneEnabled(true))
+        }
+        XCTAssertTrue(published)
+        XCTAssertFalse(media.calls.contains(.setMicrophoneEnabled(false)))
+        context.stop()
+    }
+
+
+    func testSetMutedWhileConnectedAppliesAtOnceAndReports() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        var reported: [Bool] = []
+        context.onMutedChanged = { (muted: Bool) -> Void in
+            reported.append(muted)
+        }
+        context.start()
+        let initialMuteApplied: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setMicrophoneEnabled(false))
+        }
+        XCTAssertTrue(initialMuteApplied)
+        context.setMuted(false)
+        XCTAssertEqual(reported, [false])
+        XCTAssertFalse(context.isMuted)
+        let unmuted: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setMicrophoneEnabled(true))
+        }
+        XCTAssertTrue(unmuted)
+        context.stop()
+    }
+
+
+    func testNoiseSuppressionSettingSurvivesRejoin() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")],
+            checkOutcomes: [.badRequest],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.setNoiseSuppressionEnabled(false)
+        XCTAssertFalse(context.isNoiseSuppressionEnabled)
+        context.start()
+        let appliedAfterRejoin: Bool = await waitUntil { () -> Bool in
+            return backend.joins.count == 2 && media.calls.filter { (call: FakeLiveKitRoomMediaCall) -> Bool in
+                return call == .setNoiseSuppressionEnabled(false)
+            }.count >= 2
+        }
+        XCTAssertTrue(appliedAfterRejoin)
+        XCTAssertFalse(context.isNoiseSuppressionEnabled)
+        XCTAssertEqual(context.state, .connected)
+        context.stop()
+    }
+
+
+    func testMicrophonePublishFailureEndsCallAsConnectionFailure() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        media.microphoneErrorToThrow = FakeGroupFailure.failed
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let ended: Bool = await waitUntil { () -> Bool in
+            return context.state == .ended(.connectionFailed)
+        }
+        XCTAssertTrue(ended)
+        XCTAssertFalse(media.calls.contains(.setMicrophoneEnabled(true)))
+    }
+
+
+    func testCameraPublishFailureEndsCallAsConnectionFailure() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        media.cameraPublishErrorToThrow = FakeGroupFailure.failed
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.setCamera(track: FakeLiveKitLocalVideoTrack())
+        context.start()
+        let ended: Bool = await waitUntil { () -> Bool in
+            return context.state == .ended(.connectionFailed)
+        }
+        XCTAssertTrue(ended)
+        XCTAssertFalse(media.calls.contains(.publishCamera))
+    }
 }

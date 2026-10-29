@@ -24,14 +24,48 @@ final class FakeLiveKitLocalVideoTrack: LiveKitLocalVideoTrack {
 }
 
 
+/// An audio track handle with no SDK track. It records the meters that are attached and detached.
+final class FakeLiveKitAudioTrackHandle: LiveKitAudioTrackHandle, @unchecked Sendable {
+    let participantIdentity: String
+    let isLocal: Bool
+    private(set) var attachedMeterIdentifiers: [ObjectIdentifier] = []
+    private(set) var detachedMeterIdentifiers: [ObjectIdentifier] = []
+
+
+    init(participantIdentity: String, isLocal: Bool) {
+        self.participantIdentity = participantIdentity
+        self.isLocal = isLocal
+    }
+
+
+    func attachMeter(_ meter: LiveKitAudioLevelMeter) {
+        attachedMeterIdentifiers.append(ObjectIdentifier(meter))
+    }
+
+
+    func detachMeter(_ meter: LiveKitAudioLevelMeter) {
+        detachedMeterIdentifiers.append(ObjectIdentifier(meter))
+    }
+}
+
+
 /// Records every media call in order. A call throws `errorToThrow` when it is set, and a throwing call records nothing.
 final class FakeLiveKitRoomMedia: LiveKitRoomMedia {
     var errorToThrow: Error?
+    var onAudioTrackAvailable: ((LiveKitAudioTrackHandle) -> Void)?
+    var onAudioTrackRemoved: ((LiveKitAudioTrackHandle) -> Void)?
+    /// Thrown by `setMicrophoneEnabled` only. A throwing call records nothing.
+    var microphoneErrorToThrow: Error?
+    /// Thrown by `publishCamera` only. A throwing call records nothing.
+    var cameraPublishErrorToThrow: Error?
     private(set) var calls: [FakeLiveKitRoomMediaCall] = []
 
 
     func setMicrophoneEnabled(_ isEnabled: Bool) async throws {
         try throwIfNeeded()
+        if let error: Error = microphoneErrorToThrow {
+            throw error
+        }
         calls.append(.setMicrophoneEnabled(isEnabled))
     }
 
@@ -50,6 +84,9 @@ final class FakeLiveKitRoomMedia: LiveKitRoomMedia {
 
     func publishCamera(_ track: LiveKitLocalVideoTrack) async throws {
         try throwIfNeeded()
+        if let error: Error = cameraPublishErrorToThrow {
+            throw error
+        }
         calls.append(.publishCamera)
     }
 
@@ -141,6 +178,39 @@ final class LiveKitRoomMediaTests: XCTestCase {
                 .setAudioOutputDevice("output-2")
             ]
         )
+    }
+
+
+    func testAudioTrackCallbacksReachTheirOwners() {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        var availableIdentities: [String] = []
+        var removedIdentities: [String] = []
+        media.onAudioTrackAvailable = { (handle: LiveKitAudioTrackHandle) in
+            availableIdentities.append(handle.participantIdentity)
+        }
+        media.onAudioTrackRemoved = { (handle: LiveKitAudioTrackHandle) in
+            removedIdentities.append(handle.participantIdentity)
+        }
+
+        let handle: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u1.1", isLocal: false)
+        media.onAudioTrackAvailable?(handle)
+        media.onAudioTrackRemoved?(handle)
+
+        XCTAssertEqual(availableIdentities, ["u1.1"])
+        XCTAssertEqual(removedIdentities, ["u1.1"])
+    }
+
+
+    func testFakeAudioTrackHandleRecordsMeterAttachAndDetach() {
+        let handle: FakeLiveKitAudioTrackHandle = FakeLiveKitAudioTrackHandle(participantIdentity: "u1.1", isLocal: true)
+        let meter: FakeLiveKitAudioLevelMeter = FakeLiveKitAudioLevelMeter(level: 0.5)
+
+        handle.attachMeter(meter)
+        handle.detachMeter(meter)
+
+        XCTAssertTrue(handle.isLocal)
+        XCTAssertEqual(handle.attachedMeterIdentifiers, [ObjectIdentifier(meter)])
+        XCTAssertEqual(handle.detachedMeterIdentifiers, [ObjectIdentifier(meter)])
     }
 
 
