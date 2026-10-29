@@ -52,6 +52,7 @@ swift_library(
         "//submodules/TelegramUI/Components/AnimatedTextComponent",
         "//submodules/TelegramUI/Components/ButtonComponent",
         "//submodules/SearchBarNode",
+        "//submodules/ImpulseFeatures:ImpulseFeatures",
     ],
     visibility = [
         "//visibility:public",

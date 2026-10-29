@@ -148,6 +148,7 @@ swift_library(
         "//submodules/Utils/DeviceModel",
         "//submodules/PasscodeCore",
         "//submodules/WalletContext",
+        "//submodules/ImpulseFeatures:ImpulseFeatures",
     ],
     visibility = [
         "//visibility:public",
