@@ -70,6 +70,11 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
     /// The inputs of the composition root for one context: the endpoints, the bundled mapping, the keychain, the declaration,
     /// the update bridge of the context, and the route source the transport reads for each new connection.
     func makeCompositionInputs(context: MTContext) throws -> ImpulseNetworkCompositionInputs {
+#if os(iOS)
+        let clientName: String = "impulsem-ios"
+#else
+        let clientName: String = ImpulsePoolCarrier.clientName
+#endif
         return ImpulseNetworkCompositionInputs(
             endpoints: try ImpulseEndpoints(baseUrl: self.baseUrl),
             mapping: try ImpulseMapping.loadBundled(),
@@ -77,24 +82,25 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
             keychainAccessGroup: self.resolvedAccessGroup(),
             identityClock: ImpulseSystemClock(),
             identityScheduler: ImpulseTaskScheduler(),
-            declaration: ImpulseNetworkEngineFactory.makeDeclaration(),
+            declaration: ImpulseNetworkEngineFactory.makeDeclaration(environment: context.apiEnvironment),
             updateBridge: ImpulseUpdateBridge(context: context),
-            routeSource: self.routeSource
+            routeSource: self.routeSource,
+            clientName: clientName
         )
     }
 
 
-    /// The declaration of this application and device: the api id, the device, the system and application versions and the languages.
-    static func makeDeclaration() -> ImpulseDeclaration {
-        let appVersion: String = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
+    /// The declaration of this application and device, read from the api environment of the context: the api id, the device,
+    /// the system and application versions and the language pack. The languages come from the current locale.
+    static func makeDeclaration(environment: MTApiEnvironment) -> ImpulseDeclaration {
         let language: String = Locale.current.languageCode ?? "en"
         return ImpulseDeclaration(
-            apiId: 4,
-            deviceModel: "Mac",
-            systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-            appVersion: appVersion,
+            apiId: environment.apiId,
+            deviceModel: environment.deviceModel ?? "",
+            systemVersion: environment.systemVersion ?? "",
+            appVersion: environment.appVersion ?? "",
             systemLangCode: language,
-            langPack: ImpulseDeclaration.macosLangPack,
+            langPack: environment.langPack ?? "",
             langCode: language
         )
     }
