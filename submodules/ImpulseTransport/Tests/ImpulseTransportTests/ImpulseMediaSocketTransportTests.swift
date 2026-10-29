@@ -313,6 +313,28 @@ final class ImpulseMediaSocketTransportTests: XCTestCase {
     }
 
 
+    func testMediaConfigWithRouteCarriesTheCredentialsProvider() {
+        let source: MediaFixedRouteSource = MediaFixedRouteSource(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 1080, username: "user", password: "secret")
+        )
+        let config: CentrifugeClientConfig = ImpulseMediaSocketTransport.makeConfig(
+            tokenGetter: { (_: CentrifugeConnectionTokenEvent, completion: @escaping (Result<String, Error>) -> Void) -> Void in
+                completion(.success("token"))
+            },
+            routeSource: source
+        )
+
+        guard let provider: CentrifugeProxyCredentialsProvider = config.proxyCredentialsProvider else {
+            XCTFail("The media config with a route must carry the credentials provider")
+            return
+        }
+        let credentials: CentrifugeProxyCredentials? = provider()
+
+        XCTAssertEqual(credentials?.user, "user")
+        XCTAssertEqual(credentials?.password, "secret")
+    }
+
+
     private func failure(of result: Result<Data, ImpulseCarrierFailure>) -> ImpulseCarrierFailure? {
         switch result {
         case .success:

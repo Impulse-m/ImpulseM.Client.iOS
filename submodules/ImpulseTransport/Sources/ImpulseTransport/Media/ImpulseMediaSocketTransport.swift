@@ -132,7 +132,7 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
 
     /// The configuration of the media client: the 1 to 30 second reconnect backoff, the ping delay, the media call
     /// timeout, the session token and the native WebSocket. The native WebSocket is the only one that accepts the route
-    /// provider, so every media client uses it, with or without a route.
+    /// and its proxy credentials providers, so every media client uses it, with or without a route.
     internal static func makeConfig(
         tokenGetter: @escaping CentrifugeConnectionTokenGetter,
         routeSource: ImpulseProxyRouteSource? = nil
@@ -145,7 +145,8 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
             name: ImpulsePoolCarrier.clientName,
             useNativeWebSocket: true,
             urlSessionConfigurationProvider: ImpulseSocketPolicy.urlSessionConfigurationProvider(routeSource: routeSource),
-            tokenGetter: tokenGetter
+            tokenGetter: tokenGetter,
+            proxyCredentialsProvider: ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: routeSource)
         )
     }
 

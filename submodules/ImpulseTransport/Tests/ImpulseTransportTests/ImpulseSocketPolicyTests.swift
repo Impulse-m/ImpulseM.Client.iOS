@@ -124,4 +124,80 @@ final class ImpulseSocketPolicyTests: XCTestCase {
         XCTAssertEqual(proxy["HTTPPort"] as? Int, 9)
         XCTAssertEqual(proxy["HTTPSPort"] as? Int, 9)
     }
+
+
+    func testNilSourceGivesNoCredentialsProvider() {
+        XCTAssertNil(ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: nil))
+    }
+
+
+    func testRouteWithCredentialsGivesThem() {
+        let source: SocketPolicyRouteSource = SocketPolicyRouteSource(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 1080, username: "user", password: "secret")
+        )
+        let provider: CentrifugeProxyCredentialsProvider? = ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: source)
+        let credentials: CentrifugeProxyCredentials? = provider?()
+
+        XCTAssertEqual(credentials?.user, "user")
+        XCTAssertEqual(credentials?.password, "secret")
+    }
+
+
+    func testRouteWithoutCredentialsGivesNil() {
+        let source: SocketPolicyRouteSource = SocketPolicyRouteSource(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 1080, username: nil, password: nil)
+        )
+        let provider: CentrifugeProxyCredentialsProvider? = ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: source)
+
+        XCTAssertNotNil(provider)
+        XCTAssertNil(provider?())
+    }
+
+
+    func testRouteWithUserOnlyGivesNil() {
+        let source: SocketPolicyRouteSource = SocketPolicyRouteSource(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 1080, username: "user", password: nil)
+        )
+        let provider: CentrifugeProxyCredentialsProvider? = ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: source)
+
+        XCTAssertNil(provider?())
+    }
+
+
+    func testNilCurrentRouteGivesNilCredentials() {
+        let source: SocketPolicyRouteSource = SocketPolicyRouteSource(route: nil)
+        let provider: CentrifugeProxyCredentialsProvider? = ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: source)
+
+        XCTAssertNotNil(provider)
+        XCTAssertNil(provider?())
+    }
+
+
+    func testCredentialsProviderReadsTheRouteAtCallTime() {
+        let source: SocketPolicyRouteSource = SocketPolicyRouteSource(route: nil)
+        let provider: CentrifugeProxyCredentialsProvider? = ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: source)
+        XCTAssertNil(provider?())
+
+        source.setRoute(ImpulseProxyRoute(host: "127.0.0.1", port: 1080, username: "user", password: "secret"))
+        let credentials: CentrifugeProxyCredentials? = provider?()
+
+        XCTAssertEqual(credentials?.user, "user")
+        XCTAssertEqual(credentials?.password, "secret")
+    }
+
+
+    func testClientConfigCarriesTheCredentialsProviderOfTheRoute() {
+        let source: SocketPolicyRouteSource = SocketPolicyRouteSource(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 1080, username: "user", password: "secret")
+        )
+        let config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "token", routeSource: source)
+        guard let provider: CentrifugeProxyCredentialsProvider = config.proxyCredentialsProvider else {
+            XCTFail("The route config must carry a credentials provider")
+            return
+        }
+        let credentials: CentrifugeProxyCredentials? = provider()
+
+        XCTAssertEqual(credentials?.user, "user")
+        XCTAssertEqual(credentials?.password, "secret")
+    }
 }

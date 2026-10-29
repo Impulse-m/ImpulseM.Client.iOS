@@ -25,7 +25,8 @@ public enum ImpulseSocketPolicy {
 
 
     /// The configuration of an update socket or pool client, as `clientConfig(token:)`, whose native WebSocket connects
-    /// through the route of `routeSource`. A nil source gives the direct configuration.
+    /// through the route of `routeSource` and answers the route's proxy Basic challenge with its credentials. A nil source
+    /// gives the direct configuration.
     public static func clientConfig(
         token: String,
         routeSource: ImpulseProxyRouteSource?
@@ -36,7 +37,8 @@ public enum ImpulseSocketPolicy {
             maxServerPingDelay: ImpulseSocketPolicy.maxServerPingDelaySeconds,
             token: token,
             useNativeWebSocket: true,
-            urlSessionConfigurationProvider: ImpulseSocketPolicy.urlSessionConfigurationProvider(routeSource: routeSource)
+            urlSessionConfigurationProvider: ImpulseSocketPolicy.urlSessionConfigurationProvider(routeSource: routeSource),
+            proxyCredentialsProvider: ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: routeSource)
         )
     }
 
@@ -55,6 +57,26 @@ public enum ImpulseSocketPolicy {
             let proxyDictionary: [AnyHashable: Any]? = ImpulseProxyConnectionProxy.dictionary(for: routeSource.currentRoute)
             configuration.connectionProxyDictionary = proxyDictionary
             return configuration
+        }
+        return provider
+    }
+
+
+    /// The provider of the Basic credentials the native WebSocket answers a proxy challenge with. Nil when there is no
+    /// source. Otherwise the SDK calls the provider at each proxy challenge and it reads the route at that moment, so a
+    /// route change applies to the next challenge without a new client. A route without both a user name and a password
+    /// gives nil, which fails the attempt instead of going direct.
+    public static func proxyCredentialsProvider(
+        routeSource: ImpulseProxyRouteSource?
+    ) -> CentrifugeProxyCredentialsProvider? {
+        guard let routeSource else {
+            return nil
+        }
+        let provider: CentrifugeProxyCredentialsProvider = {
+            guard let route: ImpulseProxyRoute = routeSource.currentRoute, let user: String = route.username, let password: String = route.password else {
+                return nil
+            }
+            return CentrifugeProxyCredentials(user: user, password: password)
         }
         return provider
     }
