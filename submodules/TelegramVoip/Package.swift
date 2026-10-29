@@ -19,7 +19,7 @@ let package = Package(
         .package(name: "SSignalKit", path: "../SSignalKit"),
         .package(name: "FFMpegBinding", path: "../FFMpegBinding"),
         .package(name: "TelegramCore", path: "../TelegramCore"),
-        .package(url: "https://github.com/livekit/client-sdk-swift.git", exact: "2.19.0"),
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", .exact("2.19.0")),
 
     ],
     targets: [
