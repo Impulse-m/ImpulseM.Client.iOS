@@ -871,27 +871,10 @@ func _internal_joinGroupCall(account: Account, peerId: PeerId?, joinAs: PeerId?,
                         state.adminIds.insert(account.peerId)
                     }
                     
-                    #if os(macOS)
                     guard GroupCallLiveKitJoinParser.mainJoinParams(json: parsedClientParams, callId: callId) != nil else {
                         return .fail(.error(.generic))
                     }
                     let connectionMode: JoinGroupCallResult.ConnectionMode = .rtc
-                    #else
-                    let connectionMode: JoinGroupCallResult.ConnectionMode
-                    if let clientParamsData = parsedClientParams.data(using: .utf8), let dict = (try? JSONSerialization.jsonObject(with: clientParamsData, options: [])) as? [String: Any] {
-                        if let stream = dict["stream"] as? Bool, stream {
-                            var isExternalStream = false
-                            if let rtmp = dict["rtmp"] as? Bool, rtmp {
-                                isExternalStream = true
-                            }
-                            connectionMode = .broadcast(isExternalStream: isExternalStream)
-                        } else {
-                            connectionMode = .rtc
-                        }
-                    } else {
-                        connectionMode = .broadcast(isExternalStream: false)
-                    }
-                    #endif
 
                     return account.postbox.transaction { transaction -> Signal<JoinGroupCallResult, InternalJoinError> in
                         if let peerId {
@@ -1102,49 +1085,11 @@ func _internal_joinGroupCallAsScreencast(account: Account, callId: Int64, access
     |> mapToSignal { updates -> Signal<JoinGroupCallAsScreencastResult, JoinGroupCallError> in
         account.stateManager.addUpdates(updates)
 
-        #if os(macOS)
         return GroupCallLiveKitJoinParser.screencastJoinResult(
             callId: callId,
             selfPeerId: account.peerId,
             updates: updates
         )
-        #else
-        var maybeParsedClientParams: String?
-        loop: for update in updates.allUpdates {
-            switch update {
-            case let .updateGroupCallConnection(updateGroupCallConnectionData):
-                let params = updateGroupCallConnectionData.params
-                switch params {
-                case let .dataJSON(dataJSONData):
-                    let data = dataJSONData.data
-                    maybeParsedClientParams = data
-                }
-            default:
-                break
-            }
-        }
-
-        guard let parsedClientParams = maybeParsedClientParams else {
-            return .fail(.generic)
-        }
-
-        var maybeEndpointId: String?
-
-        if let jsonData = parsedClientParams.data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] {
-            if let videoSection = json["video"] as? [String: Any] {
-                maybeEndpointId = videoSection["endpoint"] as? String
-            }
-        }
-
-        guard let endpointId = maybeEndpointId else {
-            return .fail(.generic)
-        }
-
-        return .single(JoinGroupCallAsScreencastResult(
-            jsonParams: parsedClientParams,
-            endpointId: endpointId
-        ))
-        #endif
     }
 }
 
