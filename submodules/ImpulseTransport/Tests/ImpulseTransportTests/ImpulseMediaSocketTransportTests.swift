@@ -47,6 +47,27 @@ private final class ResultRecorder {
 }
 
 
+private final class MediaNoopObservation: ImpulseProxyRouteObservation {
+    func cancel() {
+    }
+}
+
+
+private final class MediaFixedRouteSource: ImpulseProxyRouteSource, @unchecked Sendable {
+    let currentRoute: ImpulseProxyRoute?
+
+
+    init(route: ImpulseProxyRoute?) {
+        self.currentRoute = route
+    }
+
+
+    func observe(_ handler: @escaping @Sendable (Int) -> Void) -> ImpulseProxyRouteObservation {
+        return MediaNoopObservation()
+    }
+}
+
+
 final class ImpulseMediaSocketTransportTests: XCTestCase {
     func testSendForwardsMethodPayloadAndHeaders() {
         let client: FakeMediaClient = FakeMediaClient()
@@ -230,6 +251,65 @@ final class ImpulseMediaSocketTransportTests: XCTestCase {
         XCTAssertEqual(config.timeout, ImpulseMediaFleet.callTimeoutSeconds)
         XCTAssertEqual(config.name, ImpulsePoolCarrier.clientName)
         XCTAssertNotNil(config.tokenGetter)
+    }
+
+
+    func testEveryMediaClientUsesTheNativeWebSocketWithoutRoute() {
+        let config: CentrifugeClientConfig = ImpulseMediaSocketTransport.makeConfig(tokenGetter: { (_: CentrifugeConnectionTokenEvent, completion: @escaping (Result<String, Error>) -> Void) -> Void in
+            completion(.success("token"))
+        })
+
+        XCTAssertTrue(config.useNativeWebSocket)
+        XCTAssertNil(config.urlSessionConfigurationProvider)
+    }
+
+
+    func testEveryMediaClientUsesTheNativeWebSocketWithRoute() {
+        let source: MediaFixedRouteSource = MediaFixedRouteSource(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 1080, username: nil, password: nil)
+        )
+        let config: CentrifugeClientConfig = ImpulseMediaSocketTransport.makeConfig(
+            tokenGetter: { (_: CentrifugeConnectionTokenEvent, completion: @escaping (Result<String, Error>) -> Void) -> Void in
+                completion(.success("token"))
+            },
+            routeSource: source
+        )
+
+        XCTAssertTrue(config.useNativeWebSocket)
+        guard let provider: URLSessionConfigurationProvider = config.urlSessionConfigurationProvider else {
+            XCTFail("The media config with a route must carry the route provider")
+            return
+        }
+        let proxy: [AnyHashable: Any] = provider().connectionProxyDictionary ?? [:]
+        XCTAssertEqual(proxy["HTTPProxy"] as? String, "127.0.0.1")
+        XCTAssertEqual(proxy["HTTPPort"] as? Int, 1080)
+    }
+
+
+    func testRoutedMediaTransportIsConstructedWithoutConnecting() {
+        let source: MediaFixedRouteSource = MediaFixedRouteSource(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 9, username: nil, password: nil)
+        )
+        let transport: ImpulseMediaSocketTransport = ImpulseMediaSocketTransport(
+            endpoint: "wss://media.example.invalid/connection/websocket",
+            tokenGetter: { (_: CentrifugeConnectionTokenEvent, completion: @escaping (Result<String, Error>) -> Void) -> Void in
+                completion(.success("token"))
+            },
+            routeSource: source
+        )
+
+        transport.close()
+        let recorder: ResultRecorder = ResultRecorder()
+        _ = transport.send(
+            method: "upload.getFile",
+            data: Data(),
+            timeoutSeconds: 1.0
+        ) { (result: Result<Data, ImpulseCarrierFailure>) -> Void in
+            recorder.results.append(result)
+        }
+
+        XCTAssertEqual(recorder.results.count, 1)
+        XCTAssertEqual(failure(of: recorder.results[0]), ImpulseSdkFailure.networkFailure)
     }
 
 

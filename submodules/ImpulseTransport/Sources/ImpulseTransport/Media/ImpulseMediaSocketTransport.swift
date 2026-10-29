@@ -64,13 +64,18 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
 
 
     /// Creates the transport of `endpoint` with a new SDK client that takes its connection token from `tokenGetter`.
+    /// The client's native WebSocket connects through the route of `routeSource`, or directly when it is nil.
     public convenience init(
         endpoint: String,
-        tokenGetter: @escaping CentrifugeConnectionTokenGetter
+        tokenGetter: @escaping CentrifugeConnectionTokenGetter,
+        routeSource: ImpulseProxyRouteSource? = nil
     ) {
         let client: CentrifugeClient = CentrifugeClient(
             endpoint: endpoint,
-            config: ImpulseMediaSocketTransport.makeConfig(tokenGetter: tokenGetter)
+            config: ImpulseMediaSocketTransport.makeConfig(
+                tokenGetter: tokenGetter,
+                routeSource: routeSource
+            )
         )
         self.init(client: client)
     }
@@ -126,14 +131,20 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
 
 
     /// The configuration of the media client: the 1 to 30 second reconnect backoff, the ping delay, the media call
-    /// timeout and the session token.
-    internal static func makeConfig(tokenGetter: @escaping CentrifugeConnectionTokenGetter) -> CentrifugeClientConfig {
+    /// timeout, the session token and the native WebSocket. The native WebSocket is the only one that accepts the route
+    /// provider, so every media client uses it, with or without a route.
+    internal static func makeConfig(
+        tokenGetter: @escaping CentrifugeConnectionTokenGetter,
+        routeSource: ImpulseProxyRouteSource? = nil
+    ) -> CentrifugeClientConfig {
         return CentrifugeClientConfig(
             timeout: ImpulseMediaFleet.callTimeoutSeconds,
             minReconnectDelay: ImpulseMediaSocketTransport.minReconnectDelaySeconds,
             maxReconnectDelay: ImpulseMediaSocketTransport.maxReconnectDelaySeconds,
             maxServerPingDelay: ImpulseMediaSocketTransport.maxServerPingDelaySeconds,
             name: ImpulsePoolCarrier.clientName,
+            useNativeWebSocket: true,
+            urlSessionConfigurationProvider: ImpulseSocketPolicy.urlSessionConfigurationProvider(routeSource: routeSource),
             tokenGetter: tokenGetter
         )
     }
