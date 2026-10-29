@@ -339,19 +339,21 @@ extension ImpulseTokens: ImpulseRequestSession {
 }
 
 
-/// Holds the requests that wait for a login. It opens when a user logs in and closes when the session ends.
-internal final class ImpulseLoginGate: @unchecked Sendable {
+/// Holds the requests that wait for a login. It opens when a user logs in and closes when the session ends. One gate is
+/// shared by the request services of an account, so a login releases the requests of every session of that account.
+public final class ImpulseLoginGate: @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private var isOpen: Bool
     private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
 
 
-    internal init(isOpen: Bool) {
+    public init(isOpen: Bool) {
         self.isOpen = isOpen
     }
 
 
-    internal func setOpen(_ value: Bool) {
+    /// Opens the gate, which releases the waiting requests, or closes it.
+    public func setOpen(_ value: Bool) {
         var released: [CheckedContinuation<Bool, Never>] = []
         self.lock.lock()
         self.isOpen = value
@@ -433,6 +435,7 @@ public final class ImpulseRequestService: Sendable {
     private let routeEpoch: ImpulseRouteEpochCounter
     private let onAuthorizationRequired: @Sendable () -> Void
     private let clock: any ImpulseRequestClock
+    private let identityTag: (@Sendable () async -> String?)?
     private static let notInitializedText: String = "CONNECTION_NOT_INITED"
     /// The failure a call ends with when its deadline passes before any carrier failure. It has no server answer, so
     /// it is a timeout, the same as a carrier failure without a code.
@@ -464,17 +467,20 @@ public final class ImpulseRequestService: Sendable {
         declarations: (any ImpulseDeclarationGate)?,
         signedIn: Bool,
         onAuthorizationRequired: @escaping @Sendable () -> Void,
-        clock: any ImpulseRequestClock = ImpulseSystemRequestClock()
+        clock: any ImpulseRequestClock = ImpulseSystemRequestClock(),
+        loginGate: ImpulseLoginGate? = nil,
+        identityTag: (@Sendable () async -> String?)? = nil
     ) {
         self.session = session
         self.updateCarrier = updateCarrier
         self.mediaCarrier = mediaCarrier
         self.poolCarrier = poolCarrier
         self.declarations = declarations
-        self.loginGate = ImpulseLoginGate(isOpen: signedIn)
+        self.loginGate = loginGate ?? ImpulseLoginGate(isOpen: signedIn)
         self.routeEpoch = ImpulseRouteEpochCounter()
         self.onAuthorizationRequired = onAuthorizationRequired
         self.clock = clock
+        self.identityTag = identityTag
     }
 
 
@@ -524,7 +530,12 @@ public final class ImpulseRequestService: Sendable {
 
         let route: ImpulseCarrierRoute = ImpulseCarrier.route(method: request.method, signedIn: signedIn)
         if case .refused(let refusal) = route {
+            ImpulseDiagnostics.log("A call is refused locally: \(request.method), signed in: \(signedIn)")
             return .failure(.rpc(refusal))
+        }
+        if !signedIn, ImpulseMethodClasses.identitySocketMethods.contains(request.method), let tagOf: (@Sendable () async -> String?) = self.identityTag {
+            let tag: String? = await tagOf()
+            ImpulseDiagnostics.log("A call goes on the identity: \(request.method), identity \(tag ?? "none")")
         }
         if Task.isCancelled {
             return .failure(.canceled)

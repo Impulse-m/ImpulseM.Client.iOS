@@ -10,7 +10,7 @@ struct ImpulseNetworkCompositionInputs {
     let endpoints: ImpulseEndpoints
     let mapping: ImpulseMapping
     let keychain: any ImpulseKeychain
-    let keychainAccessGroup: String
+    let keychainAccessGroup: String?
     let identityClock: any ImpulseIdentityClock
     let identityScheduler: any ImpulseIdentityScheduler
     let declaration: ImpulseDeclaration
@@ -162,6 +162,8 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
     let mediaCarrier: ImpulseMediaRequestCarrier
     let declarer: ImpulseConnectionDeclarer
     let requestService: ImpulseRequestService
+    let loginGate: ImpulseLoginGate
+    let sessionInstaller: ImpulseSessionInstaller
     let telemetry: ImpulseTelemetry
     let realtime: ImpulseRealtime
     let forwarder: ImpulseRealtimeForwarder
@@ -255,8 +257,12 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         let tokens: ImpulseTokens = ImpulseTokens(storage: store, transport: refreshTransport)
         let declarer: ImpulseConnectionDeclarer = ImpulseConnectionDeclarer(
             carrier: updateCarrier,
-            credentials: credentials
+            credentials: credentials,
+            reporter: { (outcome: ImpulseDeclarationOutcome, attempt: Int, code: Int) -> Void in
+                Logger.shared.log("ImpulseNetwork", "The connection declaration: \(outcome.rawValue), attempt \(attempt), error \(code)")
+            }
         )
+        let loginGate: ImpulseLoginGate = ImpulseLoginGate(isOpen: store.isLoggedIn)
         let requestService: ImpulseRequestService = ImpulseRequestService(
             session: tokens,
             updateCarrier: updateCarrier,
@@ -264,7 +270,9 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             poolCarrier: poolRequestCarrier,
             declarations: declarer,
             signedIn: store.isLoggedIn,
-            onAuthorizationRequired: {}
+            onAuthorizationRequired: {},
+            loginGate: loginGate,
+            identityTag: ImpulseNetworkCompositionRoot.identityTagSource(identity: identity)
         )
         let telemetry: ImpulseTelemetry = ImpulseTelemetry(
             sink: ImpulseRequestTelemetrySink(transcoder: transcoder, requester: requestService)
@@ -282,7 +290,19 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             }
         )
 
-        link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials))
+        let sessionInstaller: ImpulseSessionInstaller = ImpulseSessionInstaller(
+            identity: identity,
+            tokens: tokens,
+            realtime: realtime,
+            mapping: inputs.mapping,
+            setSignedIn: { (signedIn: Bool) -> Void in
+                loginGate.setOpen(signedIn)
+            },
+            credentials: credentials,
+            declarer: declarer
+        )
+
+        link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials, declarer: declarer))
 
         let routeUpdateSocket: any ImpulseRouteUpdateSocket = seams?.updateSocket ?? ImpulseRootUpdateSocketAdapter(client: updateClient)
         let routePool: any ImpulseRoutePool = seams?.pool ?? ImpulseRootPoolAdapter(pool: pool)
@@ -304,6 +324,8 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         self.mediaCarrier = mediaCarrier
         self.declarer = declarer
         self.requestService = requestService
+        self.loginGate = loginGate
+        self.sessionInstaller = sessionInstaller
         self.telemetry = telemetry
         self.realtime = realtime
         self.forwarder = forwarder
@@ -369,6 +391,15 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
 
         case .worker(let masterDatacenterId, let isMedia, let isCdn):
             return .worker(masterDatacenterId: masterDatacenterId, isMedia: isMedia, isCdn: isCdn)
+        }
+    }
+
+
+    /// The diagnostic tag of the identity the socket presents: the hash of its subject and its `orig_iat`. It never carries the token.
+    static func identityTagSource(identity: ImpulseIdentityManager) -> @Sendable () async -> String? {
+        return { () async -> String? in
+            let token: String? = await identity.current()
+            return ImpulseDiagnostics.identityTag(token: token)
         }
     }
 
@@ -554,7 +585,10 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             poolCarrier: self.poolRequestCarrier,
             declarations: self.declarer,
             signedIn: self.sessionStore.isLoggedIn,
-            delegate: events
+            delegate: events,
+            loginGate: self.loginGate,
+            identityTag: ImpulseNetworkCompositionRoot.identityTagSource(identity: self.identity),
+            sessionInstaller: self.sessionInstaller
         )
     }
 }

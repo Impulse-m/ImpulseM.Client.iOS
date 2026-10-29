@@ -48,6 +48,9 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
         isAppExtension: Bool
     ) -> NetworkEngine? {
         Logger.shared.log("ImpulseNetwork", "The engine is created (app extension: \(isAppExtension))")
+        ImpulseDiagnostics.setSink({ (message: String) -> Void in
+            Logger.shared.log("ImpulseNetwork", message)
+        })
 
         let root: ImpulseNetworkCompositionRoot
         do {
@@ -106,19 +109,30 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
     }
 
 
-    /// The keychain access group the session items are written to: the given one, else the one the bundle names. A bundle
-    /// that names none gets an empty group, and the session items cannot be stored; the engine still runs.
-    private func resolvedAccessGroup() -> String {
-        if let group: String = self.keychainAccessGroup {
+    /// The keychain access group the session items are written to: the given one, else the one the bundle names. When
+    /// neither names one, the group is nil, so the items go to the default group of the app.
+    private func resolvedAccessGroup() -> String? {
+        if let group: String = ImpulseNetworkEngineFactory.normalizedAccessGroup(self.keychainAccessGroup) {
             return group
         }
 
         let bundled: Any? = Bundle.main.object(forInfoDictionaryKey: ImpulseNetworkEngineFactory.keychainAccessGroupKey)
-        if let value: String = bundled as? String, !value.isEmpty {
+        if let value: String = ImpulseNetworkEngineFactory.normalizedAccessGroup(bundled as? String) {
             return value
         }
 
-        Logger.shared.log("ImpulseNetwork", "The bundle names no keychain access group, so the session cannot be stored")
-        return ""
+        Logger.shared.log("ImpulseNetwork", "The bundle names no keychain access group, so the default group is used")
+        return nil
+    }
+
+
+    /// An access group as the keychain takes it: nil when none is named. An empty name is no name, so it never reaches the
+    /// keychain query as a group that matches nothing.
+    static func normalizedAccessGroup(_ value: String?) -> String? {
+        guard let group: String = value, !group.isEmpty else {
+            return nil
+        }
+
+        return group
     }
 }

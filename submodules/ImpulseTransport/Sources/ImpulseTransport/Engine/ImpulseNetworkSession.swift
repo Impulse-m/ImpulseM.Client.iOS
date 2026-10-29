@@ -83,12 +83,17 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
     public static let responseParseError: ImpulseRpcError = ImpulseRpcError(code: 400, text: "CLIENT_RESPONSE_PARSE_FAILED", temporary: false)
     /// The error of a call that the transcoder could not encode, when the transcoder gives none.
     public static let encodeError: ImpulseRpcError = ImpulseRpcError(code: 400, text: "CLIENT_TRANSCODE_FAILED", temporary: false)
+    /// The error of a login reply whose tokens come without a usable authorization, as Android answers it.
+    private static let loginReplyError: ImpulseRpcError = ImpulseRpcError(code: 400, text: "TRANSCODE_FAILED", temporary: false)
+    private static let sessionTokenField: String = "session_token"
+    private static let refreshTokenField: String = "refresh_token"
 
     public let datacenterId: Int
     public let role: ImpulseSessionRole
 
     private let transcoder: ImpulseTranscoder
     private let service: ImpulseRequestService
+    private let sessionInstaller: ImpulseSessionInstaller?
     private weak var delegate: (any ImpulseNetworkSessionDelegate)?
     private let lock: NSLock = NSLock()
     private var isStopped: Bool = false
@@ -109,11 +114,15 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
         declarations: (any ImpulseDeclarationGate)?,
         signedIn: Bool,
         delegate: (any ImpulseNetworkSessionDelegate)?,
-        clock: any ImpulseRequestClock = ImpulseSystemRequestClock()
+        clock: any ImpulseRequestClock = ImpulseSystemRequestClock(),
+        loginGate: ImpulseLoginGate? = nil,
+        identityTag: (@Sendable () async -> String?)? = nil,
+        sessionInstaller: ImpulseSessionInstaller? = nil
     ) {
         self.datacenterId = datacenterId
         self.role = role
         self.transcoder = transcoder
+        self.sessionInstaller = sessionInstaller
         self.delegate = delegate
 
         let isMain: Bool = role == .main
@@ -132,7 +141,9 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
             declarations: declarations,
             signedIn: signedIn,
             onAuthorizationRequired: authorizationRequired,
-            clock: clock
+            clock: clock,
+            loginGate: loginGate,
+            identityTag: identityTag
         )
     }
 
@@ -153,16 +164,17 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
                 return .failure(.rpc(failure))
             }
             let refusedCall: ImpulseRequestCall = ImpulseRequestCall(result: refused)
-            self.deliver(request: request, methodId: 0, identifier: UUID(), call: refusedCall)
+            self.deliver(request: request, method: "", methodId: 0, identifier: UUID(), call: refusedCall)
             return refusedCall
         }
 
         let predecessor: ImpulseRequestCall? = self.predecessor(accepting: request.dependsOn)
         let report: ImpulseSendReport = ImpulseSendReport(onSent: request.acknowledged)
+        let options: ImpulseRequestOptions = ImpulseNetworkSession.loginOptions(request.options, method: encoded.method)
         let inner: ImpulseRequestCall = ImpulseSendReportContext.$current.withValue(report) {
             return self.service.submit(
                 request: encoded,
-                options: request.options,
+                options: options,
                 dependsOn: predecessor
             )
         }
@@ -179,8 +191,32 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
         self.activeCalls.append(ImpulseActiveCall(identifier: identifier, method: encoded.method, call: outer))
         self.lock.unlock()
 
-        self.deliver(request: request, methodId: encoded.methodId, identifier: identifier, call: outer)
+        self.deliver(
+            request: request,
+            method: encoded.method,
+            methodId: encoded.methodId,
+            identifier: identifier,
+            call: outer
+        )
         return outer
+    }
+
+
+    /// The options of a call with its login flag set per method, as Android does: a call of an identity-socket method is
+    /// sent without a login, and every other call waits for one. A caller may still ask for `withoutLogin` itself.
+    private static func loginOptions(
+        _ options: ImpulseRequestOptions,
+        method: String
+    ) -> ImpulseRequestOptions {
+        let identitySocketMethod: Bool = ImpulseMethodClasses.identitySocketMethods.contains(method)
+        return ImpulseRequestOptions(
+            withoutLogin: options.withoutLogin || identitySocketMethod,
+            failOnServerErrors: options.failOnServerErrors,
+            failOnServerErrorsExceptFloodWait: options.failOnServerErrorsExceptFloodWait,
+            doNotWaitFloodWait: options.doNotWaitFloodWait,
+            totalDeadlineSeconds: options.totalDeadlineSeconds,
+            forceDownload: options.forceDownload
+        )
     }
 
 
@@ -296,6 +332,7 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
     /// Completes the request once its call settles, and forgets the call.
     private func deliver(
         request: ImpulseNetworkRequest,
+        method: String,
         methodId: UInt32,
         identifier: UUID,
         call: ImpulseRequestCall
@@ -303,7 +340,7 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
         Task {
             let result: Result<[UInt8], ImpulseRequestFailure> = await call.result.value
             self.forget(identifier: identifier)
-            self.settle(request: request, methodId: methodId, result: result)
+            await self.settle(request: request, method: method, methodId: methodId, result: result)
         }
     }
 
@@ -317,11 +354,14 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
     }
 
 
+    /// Completes the request once its reply is parsed. A reply that carries session tokens installs the session first, so the
+    /// caller never sees the reply before the session and the socket carry the new token.
     private func settle(
         request: ImpulseNetworkRequest,
+        method: String,
         methodId: UInt32,
         result: Result<[UInt8], ImpulseRequestFailure>
-    ) {
+    ) async {
         switch result {
         case .failure(.canceled):
             return
@@ -330,28 +370,75 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
             request.completed(.failure(failure))
 
         case .success(let reply):
-            request.completed(self.parse(request: request, methodId: methodId, reply: reply))
+            let parsed: Result<ImpulseNetworkResponse, ImpulseRequestFailure> = await self.parse(
+                request: request,
+                method: method,
+                methodId: methodId,
+                reply: reply
+            )
+            request.completed(parsed)
         }
     }
 
 
     private func parse(
         request: ImpulseNetworkRequest,
+        method: String,
         methodId: UInt32,
         reply: [UInt8]
-    ) -> Result<ImpulseNetworkResponse, ImpulseRequestFailure> {
+    ) async -> Result<ImpulseNetworkResponse, ImpulseRequestFailure> {
+        var captured: [String: String] = [:]
         let tl: [UInt8]
         do {
-            tl = try self.transcoder.decodeResult(methodId: methodId, proto: reply, capture: nil)
+            tl = try self.transcoder.decodeResult(
+                methodId: methodId,
+                proto: reply,
+                capture: { (protoMessage: String, fieldName: String, value: String) -> Void in
+                    captured[fieldName] = value
+                }
+            )
         } catch {
             let rpcError: ImpulseRpcError = (error as? ImpulseTranscodeError)?.rpcError ?? ImpulseNetworkSession.responseParseError
             return .failure(.rpc(rpcError))
+        }
+
+        if let installFailure: ImpulseRequestFailure = await self.installSession(method: method, tl: tl, captured: captured) {
+            return .failure(installFailure)
         }
 
         guard let parsed: Any = request.parse(tl) else {
             return .failure(.rpc(ImpulseNetworkSession.tlParsingError))
         }
         return .success(ImpulseNetworkResponse(result: parsed))
+    }
+
+
+    /// Installs the session when the reply carries session tokens, whichever method answered, as Android does. Tokens
+    /// that come without a usable authorization, or an install that is refused, fail the call as a transcode error.
+    private func installSession(
+        method: String,
+        tl: [UInt8],
+        captured: [String: String]
+    ) async -> ImpulseRequestFailure? {
+        guard let installer: ImpulseSessionInstaller = self.sessionInstaller else {
+            return nil
+        }
+        guard captured[ImpulseNetworkSession.sessionTokenField] != nil else {
+            return nil
+        }
+        guard captured[ImpulseNetworkSession.refreshTokenField] != nil else {
+            return nil
+        }
+
+        guard let authorization: [UInt8] = await installer.authorization(inResult: tl) else {
+            return ImpulseRequestFailure.rpc(ImpulseNetworkSession.loginReplyError)
+        }
+        do {
+            _ = try await installer.install(method: method, authorization: authorization, captured: captured)
+            return nil
+        } catch {
+            return ImpulseRequestFailure.rpc(ImpulseNetworkSession.loginReplyError)
+        }
     }
 }
 

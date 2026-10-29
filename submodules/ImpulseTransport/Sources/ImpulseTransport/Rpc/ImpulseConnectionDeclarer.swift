@@ -194,6 +194,15 @@ public actor ImpulseConnectionDeclarer: ImpulseDeclarationGate {
     }
 
 
+    /// Ends a run that has nothing to declare yet, because no credential or no declaration is known. The run does not count as
+    /// finished, so the waiters stay: the next trigger (a credential or a declaration) starts a run again, and a waiter ends
+    /// at its own timeout.
+    private func idle() {
+        self.running = false
+        self.restartIfTriggered()
+    }
+
+
     /// Runs a scheduled retry unless a newer trigger has taken over.
     private func runRetry(attempt: Int, forGeneration: UInt64) async {
         if self.generation != forGeneration || self.running {
@@ -210,7 +219,7 @@ public actor ImpulseConnectionDeclarer: ImpulseDeclarationGate {
         forGeneration: UInt64
     ) async {
         guard let presented: String = self.credentials.currentCredential(), let current: ImpulseDeclaration = self.declaration else {
-            self.finish()
+            self.idle()
             return
         }
         if self.isDeclared(credential: presented) {

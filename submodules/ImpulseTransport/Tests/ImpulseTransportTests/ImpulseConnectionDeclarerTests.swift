@@ -434,4 +434,52 @@ final class ImpulseConnectionDeclarerTests: XCTestCase {
         XCTAssertTrue(later)
         XCTAssertEqual(carrier.methods().count, 1)
     }
+
+
+    /// A wait with no credential known waits for the mint, and the declaration goes out once the credential appears.
+    func testAwaitWaitsForTheMintInsteadOfEndingAtOnce() async {
+        let carrier: DeclarerCarrier = DeclarerCarrier(replies: [])
+        let credentials: DeclarerCredentials = DeclarerCredentials(value: nil)
+        let declarer: ImpulseConnectionDeclarer = ImpulseConnectionDeclarer(
+            carrier: carrier,
+            credentials: credentials,
+            clock: DeclarerClock()
+        )
+        await declarer.setDeclaration(makeDeclaration())
+
+        let waiting: Task<Bool, Never> = Task {
+            return await declarer.awaitDeclared(timeoutSeconds: 5)
+        }
+        await settle()
+        XCTAssertEqual(carrier.methods(), [])
+
+        credentials.set("token-1")
+        await declarer.credentialChanged()
+        let declared: Bool = await waiting.value
+
+        XCTAssertTrue(declared)
+        XCTAssertEqual(carrier.methods(), ["initConnection"])
+    }
+
+
+    /// The declaration goes out on the identity, and again when the socket presents the session credential.
+    func testDeclaresOnMintAndAgainOnTheSessionCredential() async {
+        let carrier: DeclarerCarrier = DeclarerCarrier(replies: [])
+        let credentials: DeclarerCredentials = DeclarerCredentials(value: "identity-token")
+        let declarer: ImpulseConnectionDeclarer = ImpulseConnectionDeclarer(
+            carrier: carrier,
+            credentials: credentials,
+            clock: DeclarerClock()
+        )
+        await declarer.setDeclaration(makeDeclaration())
+        let declaredOnMint: Bool = await declarer.awaitDeclared(timeoutSeconds: 2)
+
+        credentials.set("access-token")
+        await declarer.sessionChanged()
+        let declaredOnSession: Bool = await declarer.awaitDeclared(timeoutSeconds: 2)
+
+        XCTAssertTrue(declaredOnMint)
+        XCTAssertTrue(declaredOnSession)
+        XCTAssertEqual(carrier.methods(), ["initConnection", "initConnection"])
+    }
 }
