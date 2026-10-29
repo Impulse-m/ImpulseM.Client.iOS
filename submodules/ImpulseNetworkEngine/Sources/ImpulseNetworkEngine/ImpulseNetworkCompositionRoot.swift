@@ -69,7 +69,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             identityRenewal: { (completion: @escaping (Result<Void, Error>) -> Void) -> Void in
                 link.renewIdentity(completion: completion)
             },
-            mainConfig: ImpulseNetworkCompositionRoot.makePoolConfig()
+            mainConfig: ImpulseNetworkCompositionRoot.makePoolConfig(routeSource: inputs.routeSource)
         )
         let poolRequestCarrier: ImpulsePoolRequestCarrier = ImpulsePoolRequestCarrier(pool: pool)
         let identityCarrier: ImpulsePoolIdentityCarrier = ImpulsePoolIdentityCarrier(carrier: poolRequestCarrier)
@@ -84,16 +84,19 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         let updateClient: CentrifugeClient = ImpulseUpdateSocketCarrier.makeClient(
             endpoint: inputs.endpoints.realtimeUrl(),
             config: ImpulseNetworkCompositionRoot.makeUpdateConfig(
-                tokenGetter: ImpulseNetworkCompositionRoot.connectionTokenGetter(link: link)
+                tokenGetter: ImpulseNetworkCompositionRoot.connectionTokenGetter(link: link),
+                routeSource: inputs.routeSource
             )
         )
         let updateSocket: ImpulseCentrifugeSocket = ImpulseCentrifugeSocket(client: updateClient)
         let updateCarrier: ImpulseUpdateSocketCarrier = ImpulseUpdateSocketCarrier(client: updateClient)
 
+        let mediaRouteSource: ImpulseProxyRouteSource? = inputs.routeSource
         let mediaFleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
-            return ImpulseMediaSocketTransport(
+            return ImpulseNetworkCompositionRoot.makeMediaTransport(
                 endpoint: endpoint,
-                tokenGetter: ImpulseNetworkCompositionRoot.mediaTokenGetter(link: link)
+                tokenGetter: ImpulseNetworkCompositionRoot.mediaTokenGetter(link: link),
+                routeSource: mediaRouteSource
             )
         })
         let mediaCarrier: ImpulseMediaRequestCarrier = ImpulseMediaRequestCarrier(fleet: mediaFleet)
@@ -159,8 +162,12 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
 
     /// The socket policy of the update socket: the 1 to 30 second reconnect backoff, the ping watchdog, and the call timeout
     /// of the update calls, which the SDK requires to be at least the call deadline. The token getter supplies the connection token.
-    static func makeUpdateConfig(tokenGetter: CentrifugeConnectionTokenGetter?) -> CentrifugeClientConfig {
-        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+    /// The socket connects through the route of `routeSource`, or directly when it is nil.
+    static func makeUpdateConfig(
+        tokenGetter: CentrifugeConnectionTokenGetter?,
+        routeSource: ImpulseProxyRouteSource? = nil
+    ) -> CentrifugeClientConfig {
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "", routeSource: routeSource)
         config.timeout = ImpulseRequestTimeouts.updateCallSeconds
         config.tokenGetter = tokenGetter
         return config
@@ -168,11 +175,27 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
 
 
     /// The socket policy of the pool's main client: the same backoff and watchdog, the pool's client name and call timeout, and no token.
-    static func makePoolConfig() -> CentrifugeClientConfig {
-        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+    /// The main client connects through the route of `routeSource`, or directly when it is nil.
+    static func makePoolConfig(routeSource: ImpulseProxyRouteSource? = nil) -> CentrifugeClientConfig {
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "", routeSource: routeSource)
         config.name = ImpulsePoolCarrier.clientName
         config.timeout = ImpulsePoolCarrier.callTimeoutSeconds
         return config
+    }
+
+
+    /// The transport of one media endpoint: a socket client with the media connection token, which connects through the route
+    /// of `routeSource`, or directly when it is nil.
+    static func makeMediaTransport(
+        endpoint: String,
+        tokenGetter: @escaping CentrifugeConnectionTokenGetter,
+        routeSource: ImpulseProxyRouteSource?
+    ) -> ImpulseMediaTransport {
+        return ImpulseMediaSocketTransport(
+            endpoint: endpoint,
+            tokenGetter: tokenGetter,
+            routeSource: routeSource
+        )
     }
 
 

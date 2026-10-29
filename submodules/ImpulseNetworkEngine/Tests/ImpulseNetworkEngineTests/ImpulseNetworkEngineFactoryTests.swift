@@ -3,7 +3,7 @@ import MtProtoKit
 import SwiftCentrifuge
 import SwiftSignalKit
 import TelegramCore
-import ImpulseTransport
+@testable import ImpulseTransport
 @testable import ImpulseNetworkEngine
 
 final class ImpulseNetworkEngineFactoryTests: XCTestCase {
@@ -106,6 +106,98 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
         XCTAssertEqual(config.maxServerPingDelay, ImpulseSocketPolicy.maxServerPingDelaySeconds)
         XCTAssertEqual(config.timeout, ImpulsePoolCarrier.callTimeoutSeconds)
         XCTAssertEqual(config.name, ImpulsePoolCarrier.clientName)
+    }
+
+    func testUpdateSocketWithoutRouteSourceHasNoRouteProvider() {
+        let config: CentrifugeClientConfig = ImpulseNetworkCompositionRoot.makeUpdateConfig(tokenGetter: nil, routeSource: nil)
+        XCTAssertNil(config.urlSessionConfigurationProvider)
+    }
+
+    func testUpdateSocketWithRouteSourceConnectsThroughTheRoute() {
+        let source: ImpulseFactoryRouteSource = ImpulseFactoryRouteSource(currentRoute: ImpulseProxyRoute(
+            host: "127.0.0.1",
+            port: 1080,
+            username: nil,
+            password: nil
+        ))
+        let config: CentrifugeClientConfig = ImpulseNetworkCompositionRoot.makeUpdateConfig(tokenGetter: nil, routeSource: source)
+        XCTAssertNotNil(config.urlSessionConfigurationProvider)
+        let configuration: URLSessionConfiguration? = config.urlSessionConfigurationProvider?()
+        XCTAssertEqual(configuration?.connectionProxyDictionary?[ImpulseProxyConnectionProxy.httpsProxyKey] as? String, "127.0.0.1")
+        XCTAssertEqual(configuration?.connectionProxyDictionary?[ImpulseProxyConnectionProxy.httpsPortKey] as? Int, 1080)
+        XCTAssertEqual(config.timeout, ImpulseRequestTimeouts.updateCallSeconds)
+    }
+
+    func testPoolMainClientWithoutRouteSourceHasNoRouteProvider() {
+        let config: CentrifugeClientConfig = ImpulseNetworkCompositionRoot.makePoolConfig(routeSource: nil)
+        XCTAssertNil(config.urlSessionConfigurationProvider)
+    }
+
+    func testPoolMainClientWithRouteSourceConnectsThroughTheRoute() {
+        let source: ImpulseFactoryRouteSource = ImpulseFactoryRouteSource(currentRoute: ImpulseProxyRoute(
+            host: "127.0.0.1",
+            port: 1080,
+            username: nil,
+            password: nil
+        ))
+        let config: CentrifugeClientConfig = ImpulseNetworkCompositionRoot.makePoolConfig(routeSource: source)
+        XCTAssertNotNil(config.urlSessionConfigurationProvider)
+        let configuration: URLSessionConfiguration? = config.urlSessionConfigurationProvider?()
+        XCTAssertEqual(configuration?.connectionProxyDictionary?[ImpulseProxyConnectionProxy.httpProxyKey] as? String, "127.0.0.1")
+        XCTAssertEqual(config.name, ImpulsePoolCarrier.clientName)
+    }
+
+    func testMediaTransportWithRouteSourceIsASocketTransport() {
+        let source: ImpulseFactoryRouteSource = ImpulseFactoryRouteSource(currentRoute: ImpulseProxyRoute(
+            host: "127.0.0.1",
+            port: 1080,
+            username: nil,
+            password: nil
+        ))
+        let transport: ImpulseMediaTransport = ImpulseNetworkCompositionRoot.makeMediaTransport(
+            endpoint: "wss://media.example.invalid/socket",
+            tokenGetter: { (_: CentrifugeConnectionTokenEvent, _: @escaping (Result<String, Error>) -> Void) -> Void in
+            },
+            routeSource: source
+        )
+        XCTAssertTrue(transport is ImpulseMediaSocketTransport)
+    }
+
+    func testMediaTransportWithoutRouteSourceIsASocketTransport() {
+        let transport: ImpulseMediaTransport = ImpulseNetworkCompositionRoot.makeMediaTransport(
+            endpoint: "wss://media.example.invalid/socket",
+            tokenGetter: { (_: CentrifugeConnectionTokenEvent, _: @escaping (Result<String, Error>) -> Void) -> Void in
+            },
+            routeSource: nil
+        )
+        XCTAssertTrue(transport is ImpulseMediaSocketTransport)
+    }
+
+    func testMediaConfigWithRouteSourceConnectsThroughTheRouteOnTheNativeSocket() {
+        let source: ImpulseFactoryRouteSource = ImpulseFactoryRouteSource(currentRoute: ImpulseProxyRoute(
+            host: "127.0.0.1",
+            port: 1080,
+            username: nil,
+            password: nil
+        ))
+        let config: CentrifugeClientConfig = ImpulseMediaSocketTransport.makeConfig(
+            tokenGetter: { (_: CentrifugeConnectionTokenEvent, _: @escaping (Result<String, Error>) -> Void) -> Void in
+            },
+            routeSource: source
+        )
+        let configuration: URLSessionConfiguration? = config.urlSessionConfigurationProvider?()
+        XCTAssertTrue(config.useNativeWebSocket)
+        XCTAssertEqual(configuration?.connectionProxyDictionary?[ImpulseProxyConnectionProxy.httpsProxyKey] as? String, "127.0.0.1")
+    }
+
+    func testMediaConfigWithoutRouteSourceHasNoRouteProvider() {
+        let config: CentrifugeClientConfig = ImpulseMediaSocketTransport.makeConfig(
+            tokenGetter: { (_: CentrifugeConnectionTokenEvent, _: @escaping (Result<String, Error>) -> Void) -> Void in
+            },
+            routeSource: nil
+        )
+        XCTAssertTrue(config.useNativeWebSocket)
+        XCTAssertNil(config.urlSessionConfigurationProvider)
     }
 
     func testMainSessionBecomesTheRealtimeReceiverAndWorkerSessionDoesNot() throws {
