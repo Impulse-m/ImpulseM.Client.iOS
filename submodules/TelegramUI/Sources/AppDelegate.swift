@@ -54,6 +54,7 @@ import WalletSendScreen
 import PasscodeCore
 import LiquidGlassShapes
 import ImpulseNetworkEngine
+import ImpulseFeatures
 
 #if DEBUG
 import AlertComponent
@@ -2644,7 +2645,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                     context.openUrl(url, external: true)
                 }
             } else if let authContext = authContext {
-                if let proxyData = parseProxyUrl(sharedContext: sharedContext, url: url) {
+                if ImpulseFeatures.PROXY, let proxyData = parseProxyUrl(sharedContext: sharedContext, url: url) {
                     authContext.rootController.view.endEditing(true)
                     let presentationData = authContext.sharedContext.currentPresentationData.with { $0 }
                     let controller = ProxyServerPreviewScreen(sharedContext: authContext.sharedContext, network: authContext.account.network, updatedPresentationData: (presentationData, authContext.sharedContext.presentationData), server: proxyData)

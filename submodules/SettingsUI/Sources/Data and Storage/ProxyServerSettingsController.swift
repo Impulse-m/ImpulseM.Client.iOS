@@ -11,6 +11,7 @@ import AccountContext
 import UrlEscaping
 import UrlHandling
 import QrCodeUI
+import ImpulseFeatures
 
 private final class ProxyServerSettingsControllerArguments {
     let updateState: ((ProxyServerSettingsControllerState) -> ProxyServerSettingsControllerState) -> Void
@@ -344,7 +345,7 @@ func proxyServerSettingsController(sharedContext: SharedAccountContext, context:
         let pasteboardText = UIPasteboard.general.string ?? ""
         if let webSettings = parseWebProxySettingsLink(pasteboardText) {
             pasteboardSettings = webSettings
-        } else if let proxy = parseProxyUrl(sharedContext: sharedContext, url: pasteboardText) {
+        } else if ImpulseFeatures.PROXY, let proxy = parseProxyUrl(sharedContext: sharedContext, url: pasteboardText) {
             if let secret = proxy.secret, let parsedSecret = MTProxySecret.parseData(secret) {
                 pasteboardSettings = ProxyServerSettings(host: proxy.host, port: proxy.port, connection: .mtp(secret: parsedSecret.serialize()))
             } else {
