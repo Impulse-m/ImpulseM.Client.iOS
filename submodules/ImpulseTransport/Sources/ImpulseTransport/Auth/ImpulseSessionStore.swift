@@ -196,7 +196,7 @@ final class ImpulseKeychainFallbackNotice: @unchecked Sendable {
 /// errSecMissingEntitlement does the store move to the app's own items, announce it once, and stay there.
 final class ImpulseKeychainAccess: @unchecked Sendable {
     private let keychain: any ImpulseKeychain
-    private let accessGroup: String
+    private let accessGroup: String?
     private let notice: ImpulseKeychainFallbackNotice
     private let lock: NSLock = NSLock()
     private var fellBack: Bool = false
@@ -204,7 +204,7 @@ final class ImpulseKeychainAccess: @unchecked Sendable {
 
     init(
         keychain: any ImpulseKeychain,
-        accessGroup: String,
+        accessGroup: String?,
         notice: ImpulseKeychainFallbackNotice
     ) {
         self.keychain = keychain
@@ -269,7 +269,7 @@ public struct ImpulseKeychainIdentityStore: ImpulseIdentityStore {
 
     public init(
         keychain: any ImpulseKeychain,
-        accessGroup: String,
+        accessGroup: String?,
         accountSuffix: String
     ) {
         self.access = ImpulseKeychainAccess(
@@ -361,7 +361,7 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
     /// The account index mirrors the account slot of the app: index 0 keeps the plain names.
     public init(
         accountIndex: Int,
-        accessGroup: String,
+        accessGroup: String?,
         keychain: any ImpulseKeychain = ImpulseSystemKeychain()
     ) {
         self.init(
@@ -375,7 +375,7 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
 
     init(
         accountIndex: Int,
-        accessGroup: String,
+        accessGroup: String?,
         keychain: any ImpulseKeychain,
         notice: ImpulseKeychainFallbackNotice
     ) {

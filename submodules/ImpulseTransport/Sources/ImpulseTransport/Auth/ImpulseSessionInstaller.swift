@@ -101,8 +101,8 @@ public actor ImpulseSessionInstaller {
             refreshToken: refreshToken,
             userId: userId
         )
-        await self.identity.discard()
         await self.tokens.onLoginTokens(session)
+        await self.identity.discard()
         self.credentials?.setSessionAccessToken(session.accessToken)
         self.realtime.dropIdentityLane()
         self.realtime.rekey(token: session.accessToken)
