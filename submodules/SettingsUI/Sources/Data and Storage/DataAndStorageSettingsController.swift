@@ -13,6 +13,7 @@ import ItemListPeerActionItem
 import StorageUsageScreen
 import PresentationDataUtils
 import FaceScanScreen
+import ImpulseFeatures
 
 public enum AutomaticSaveIncomingPeerType {
     case privateChats
@@ -659,9 +660,11 @@ private func dataAndStorageControllerEntries(context: AccountContext, state: Dat
     } else {
         proxyValue = presentationData.strings.GroupInfo_SharedMediaNone
     }
-    entries.append(.connectionHeader(presentationData.theme, presentationData.strings.ChatSettings_ConnectionType_Title.uppercased()))
-    entries.append(.connectionProxy(presentationData.theme, presentationData.strings.SocksProxySetup_Title, proxyValue))
-        
+    if ImpulseFeatures.PROXY {
+        entries.append(.connectionHeader(presentationData.theme, presentationData.strings.ChatSettings_ConnectionType_Title.uppercased()))
+        entries.append(.connectionProxy(presentationData.theme, presentationData.strings.SocksProxySetup_Title, proxyValue))
+    }
+
     return entries
 }
 

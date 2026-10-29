@@ -23,6 +23,7 @@ import AlertUI
 import InAppPurchaseManager
 import ObjectiveC
 import AVFoundation
+import ImpulseFeatures
 
 private var ObjCKey_Delegate: Int?
 
@@ -300,12 +301,14 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
                                     case .timeout:
                                         text = strongSelf.presentationData.strings.Login_NetworkError
                                         actions.append(TextAlertAction(type: .defaultAction, title: strongSelf.presentationData.strings.Common_OK, action: {}))
-                                        actions.append(TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.ChatSettings_ConnectionType_UseProxy, action: { [weak controller] in
-                                            guard let strongSelf = self, let controller = controller else {
-                                                return
-                                            }
-                                            controller.present(strongSelf.sharedContext.makeProxySettingsController(sharedContext: strongSelf.sharedContext, account: strongSelf.account), in: .window(.root), with: ViewControllerPresentationArguments(presentationAnimation: .modalSheet))
-                                        }))
+                                        if ImpulseFeatures.PROXY {
+                                            actions.append(TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.ChatSettings_ConnectionType_UseProxy, action: { [weak controller] in
+                                                guard let strongSelf = self, let controller = controller else {
+                                                    return
+                                                }
+                                                controller.present(strongSelf.sharedContext.makeProxySettingsController(sharedContext: strongSelf.sharedContext, account: strongSelf.account), in: .window(.root), with: ViewControllerPresentationArguments(presentationAnimation: .modalSheet))
+                                            }))
+                                        }
                                 }
                                 (controller.navigationController as? NavigationController)?.presentOverlay(controller: textAlertController(sharedContext: strongSelf.sharedContext, title: nil, text: text, actions: actions), inGlobal: true, blockInteraction: true)
                                 

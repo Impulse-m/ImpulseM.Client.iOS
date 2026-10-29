@@ -21,6 +21,7 @@ import AuthenticationServices
 import ChatTimerScreen
 import PasskeysScreen
 import ContextUI
+import ImpulseFeatures
 
 private final class PrivacyAndSecurityControllerArguments {
     let account: Account
@@ -822,7 +823,9 @@ private func privacyAndSecurityControllerEntries(
     entries.append(.dataSettings(presentationData.theme, presentationData.strings.PrivacySettings_DataSettings))
     entries.append(.dataSettingsInfo(presentationData.theme, presentationData.strings.PrivacySettings_DataSettingsHelp))
     
-    entries.append(.openLinksIn(presentationData.theme, presentationData.strings.ChatSettings_OpenLinksIn, defaultWebBrowser))
+    if ImpulseFeatures.BROWSER_SETTINGS {
+        entries.append(.openLinksIn(presentationData.theme, presentationData.strings.ChatSettings_OpenLinksIn, defaultWebBrowser))
+    }
 
     return entries
 }
