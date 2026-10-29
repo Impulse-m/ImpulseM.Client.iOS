@@ -145,6 +145,7 @@ private final class FakeGroupBackend: @unchecked Sendable {
     private var recordedSessions: [FakeGroupRoomSession] = []
     private var recordedSinks: [LiveKitGroupRoomEventSink] = []
     private var recordedLeaves: Int = 0
+    private var recordedScreenUnpublishedAtLeave: Bool = false
 
 
     init(
@@ -184,6 +185,14 @@ private final class FakeGroupBackend: @unchecked Sendable {
     var leaveCount: Int {
         return read { () -> Int in
             return recordedLeaves
+        }
+    }
+
+
+    /// Whether the screen share was already unpublished when the presentation leave was sent.
+    var screenUnpublishedAtLeave: Bool {
+        return read { () -> Bool in
+            return recordedScreenUnpublishedAtLeave
         }
     }
 
@@ -252,6 +261,9 @@ private final class FakeGroupBackend: @unchecked Sendable {
     func recordLeave() {
         read { () -> Void in
             recordedLeaves += 1
+            if let fakeMedia: FakeLiveKitRoomMedia = media as? FakeLiveKitRoomMedia {
+                recordedScreenUnpublishedAtLeave = fakeMedia.calls.contains(.unpublishScreenShare)
+            }
         }
     }
 
@@ -585,7 +597,7 @@ final class LiveKitGroupCallContextTests: XCTestCase {
     func testPresentationNeedsConnectedCall() async throws {
         let backend: FakeGroupBackend = FakeGroupBackend(joinOutcomes: [.succeed(room: "g.77")])
         let context: LiveKitGroupCallContext = makeContext(backend: backend)
-        context.startPresentation()
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
         XCTAssertEqual(backend.joins.count, 0)
         context.start()
         let reachedConnected: Bool = await waitUntil { () -> Bool in
@@ -607,7 +619,7 @@ final class LiveKitGroupCallContextTests: XCTestCase {
             return context.state == .connected
         }
         XCTAssertTrue(reachedConnected)
-        context.startPresentation()
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
         let presenting: Bool = await waitUntil { () -> Bool in
             return context.isPresentationActive
         }
@@ -639,7 +651,7 @@ final class LiveKitGroupCallContextTests: XCTestCase {
             return context.state == .connected
         }
         XCTAssertTrue(reachedConnected)
-        context.startPresentation()
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
         let refused: Bool = await waitUntil { () -> Bool in
             return backend.joins.count == 2 && backend.leaveCount == 1
         }
@@ -660,7 +672,7 @@ final class LiveKitGroupCallContextTests: XCTestCase {
             return context.state == .connected
         }
         XCTAssertTrue(reachedConnected)
-        context.startPresentation()
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
         let presenting: Bool = await waitUntil { () -> Bool in
             return context.isPresentationActive
         }
@@ -681,7 +693,7 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         }
         XCTAssertTrue(reachedConnected)
         XCTAssertNil(context.mainMedia)
-        context.startPresentation()
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
         let presenting: Bool = await waitUntil { () -> Bool in
             return context.isPresentationActive
         }
@@ -704,7 +716,7 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         }
         XCTAssertTrue(reachedConnected)
         XCTAssertTrue(context.mainMedia === media)
-        context.startPresentation()
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
         let presenting: Bool = await waitUntil { () -> Bool in
             return context.isPresentationActive
         }
@@ -716,5 +728,171 @@ final class LiveKitGroupCallContextTests: XCTestCase {
         context.stop()
         XCTAssertNil(context.mainMedia)
         XCTAssertNil(context.presentationMedia)
+    }
+
+
+    func testPresentationPublishesTrackOnlyAfterItsRoomConnects() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
+        let published: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.publishScreenShare)
+        }
+        XCTAssertTrue(published)
+        XCTAssertEqual(backend.joins.count, 2)
+        XCTAssertEqual(backend.sessions.count, 2)
+        XCTAssertTrue(context.isPresentationActive)
+        context.stop()
+    }
+
+
+    func testStopPresentationUnpublishesScreenShareBeforeLeaving() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
+        let published: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.publishScreenShare)
+        }
+        XCTAssertTrue(published)
+        context.stopPresentation()
+        let unpublished: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.unpublishScreenShare) && backend.leaveCount == 1
+        }
+        XCTAssertTrue(unpublished)
+        XCTAssertTrue(backend.screenUnpublishedAtLeave)
+        XCTAssertEqual(context.state, .connected)
+        context.stop()
+    }
+
+
+    func testScreenPublishFailureStopsPresentationAndKeepsCall() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        media.errorToThrow = FakeGroupFailure.failed
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.startPresentation(track: FakeLiveKitLocalVideoTrack())
+        let left: Bool = await waitUntil { () -> Bool in
+            return backend.leaveCount == 1
+        }
+        XCTAssertTrue(left)
+        XCTAssertFalse(context.isPresentationActive)
+        XCTAssertEqual(context.state, .connected)
+        context.stop()
+    }
+
+
+    func testCameraSetBeforeJoinPublishesWhenMainConnects() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.setCamera(track: FakeLiveKitLocalVideoTrack())
+        XCTAssertTrue(media.calls.isEmpty)
+        context.start()
+        let published: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.publishCamera)
+        }
+        XCTAssertTrue(published)
+        XCTAssertEqual(media.calls.filter { (call: FakeLiveKitRoomMediaCall) -> Bool in
+            return call == .publishCamera
+        }.count, 1)
+        XCTAssertEqual(backend.joins.count, 1)
+        context.stop()
+    }
+
+
+    func testCameraSetWhileConnectedPublishesAtOnce() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.setCamera(track: FakeLiveKitLocalVideoTrack())
+        let published: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.publishCamera)
+        }
+        XCTAssertTrue(published)
+        context.stop()
+    }
+
+
+    func testDisableCameraMutesMainCamera() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77")],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.start()
+        let reachedConnected: Bool = await waitUntil { () -> Bool in
+            return context.state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        context.setCamera(track: FakeLiveKitLocalVideoTrack())
+        let published: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.publishCamera)
+        }
+        XCTAssertTrue(published)
+        context.disableCamera()
+        let muted: Bool = await waitUntil { () -> Bool in
+            return media.calls.contains(.setCameraEnabled(false))
+        }
+        XCTAssertTrue(muted)
+        context.stop()
+    }
+
+
+    func testCameraIsPublishedAgainAfterRejoin() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+        let backend: FakeGroupBackend = FakeGroupBackend(
+            joinOutcomes: [.succeed(room: "g.77"), .succeed(room: "g.77")],
+            checkOutcomes: [.presentNone],
+            media: media
+        )
+        let context: LiveKitGroupCallContext = makeContext(backend: backend)
+        context.setCamera(track: FakeLiveKitLocalVideoTrack())
+        context.start()
+        let republished: Bool = await waitUntil { () -> Bool in
+            return media.calls.filter { (call: FakeLiveKitRoomMediaCall) -> Bool in
+                return call == .publishCamera
+            }.count == 2
+        }
+        XCTAssertTrue(republished)
+        XCTAssertEqual(backend.joins.count, 2)
+        context.stop()
     }
 }

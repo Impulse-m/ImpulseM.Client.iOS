@@ -227,6 +227,9 @@ public final class LiveKitGroupCallContext {
     private var mainJoinTask: Task<Void, Never>?
     private var presentationJoinTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
+    private var presentationTrack: LiveKitLocalVideoTrack?
+    private var cameraTrack: LiveKitLocalVideoTrack?
+    private var cameraOperation: Task<Void, Never>?
 
 
     public convenience init(
@@ -283,34 +286,60 @@ public final class LiveKitGroupCallContext {
 
 
     /// Starts the screen presentation as a second room. The server accepts it only while the main connection is joined.
-    public func startPresentation() {
+    /// The track is published into the presentation room once that room connects.
+    public func startPresentation(track: LiveKitLocalVideoTrack) {
         guard state == .connected, !presentationRequested else {
             return
         }
         presentationRequested = true
+        presentationTrack = track
         startPresentationJoin()
     }
 
 
-    /// Stops the screen presentation: leaves it on the server and disconnects its room.
+    /// Stops the screen presentation: unpublishes the track, leaves it on the server and disconnects its room.
     public func stopPresentation() {
         guard presentationRequested else {
             return
         }
         presentationRequested = false
+        presentationTrack = nil
         presentationGeneration += 1
         presentationJoinTask?.cancel()
         presentationJoinTask = nil
         presentationSource = 0
         let session: LiveKitRoomSession? = presentationSession
+        let media: LiveKitRoomMedia? = presentationMedia
         presentationSession = nil
         presentationMedia = nil
         let leave: LiveKitGroupLeaveFunction = leavePresentationRequest
         setPresentationActive(false)
         Task { @MainActor in
+            try? await media?.unpublishScreenShare()
             await leave()
             await session?.disconnect()
         }
+    }
+
+
+    /// Publishes the camera track into the main room. The track is published at once when the main connection is joined,
+    /// and again after every rejoin, until `disableCamera()` is called.
+    public func setCamera(track: LiveKitLocalVideoTrack) {
+        guard !isEnded else {
+            return
+        }
+        cameraTrack = track
+        enqueueCameraOperation(publishCurrentCamera)
+    }
+
+
+    /// Disables the camera of the main room. The publication is muted and stays in the room.
+    public func disableCamera() {
+        guard !isEnded else {
+            return
+        }
+        cameraTrack = nil
+        enqueueCameraOperation(muteCurrentCamera)
     }
 
 
@@ -479,6 +508,7 @@ public final class LiveKitGroupCallContext {
             setState(.connected)
         }
         startPolling()
+        enqueueCameraOperation(publishCurrentCamera)
     }
 
 
@@ -574,6 +604,20 @@ public final class LiveKitGroupCallContext {
             return
         }
         presentationSource = source
+        if let track: LiveKitLocalVideoTrack = presentationTrack, let media: LiveKitRoomMedia = presentationMedia {
+            do {
+                try await media.publishScreenShare(track)
+            } catch {
+                // A presentation whose screen cannot be published stays off. It does not end the call.
+                if generation == presentationGeneration {
+                    stopPresentation()
+                }
+                return
+            }
+        }
+        guard generation == presentationGeneration, presentationRequested, !isEnded else {
+            return
+        }
         setPresentationActive(true)
     }
 
@@ -639,6 +683,35 @@ public final class LiveKitGroupCallContext {
     }
 
 
+    /// Runs camera operations one after another, so a publish and a mute never overlap.
+    private func enqueueCameraOperation(_ operation: @escaping @MainActor () async -> Void) {
+        let previous: Task<Void, Never>? = cameraOperation
+        cameraOperation = Task { @MainActor in
+            await previous?.value
+            await operation()
+        }
+    }
+
+
+    /// Publishes the current camera track into the main room, when the main connection is joined.
+    private func publishCurrentCamera() async {
+        guard let track: LiveKitLocalVideoTrack = cameraTrack, mainSource != 0, let media: LiveKitRoomMedia = mainMedia else {
+            return
+        }
+        // A camera that cannot be published leaves the call without video. The call itself stays up.
+        try? await media.publishCamera(track)
+    }
+
+
+    /// Mutes the camera publication of the main room, when no camera track is wanted and the main connection is joined.
+    private func muteCurrentCamera() async {
+        guard cameraTrack == nil, mainSource != 0, let media: LiveKitRoomMedia = mainMedia else {
+            return
+        }
+        try? await media.setCameraEnabled(false)
+    }
+
+
     private func setState(_ newState: LiveKitGroupCallState) {
         state = newState
         onStateChanged?(newState)
@@ -667,6 +740,8 @@ public final class LiveKitGroupCallContext {
         mainMedia = nil
         presentationMedia = nil
         presentationRequested = false
+        presentationTrack = nil
+        cameraTrack = nil
         mainGeneration += 1
         presentationGeneration += 1
         mainJoinTask?.cancel()
