@@ -30,6 +30,7 @@ import ChatListHeaderNoticeComponent
 import ChatListFilterTabContainerNode
 import GlassControls
 import SideColumnLayout
+import ImpulseFeatures
 
 public enum ChatListContainerNodeFilter: Equatable {
     case all
@@ -545,7 +546,7 @@ public final class ChatListContainerNode: ASDisplayNode, ASGestureRecognizerDele
         self.applyItemNodeAsCurrent(id: .all, itemNode: itemNode)
         
         let panRecognizer = InteractiveTransitionGestureRecognizer(target: self, action: #selector(self.panGesture(_:)), allowedDirections: { [weak self] _ in
-            guard let self, self.availableFilters.count > 1 || (self.controller?.isStoryPostingAvailable == true && !(self.context.sharedContext.callManager?.hasActiveCall ?? false)) else {
+            guard let self, self.availableFilters.count > 1 || (ImpulseFeatures.STORIES_POSTING && self.controller?.isStoryPostingAvailable == true && !(self.context.sharedContext.callManager?.hasActiveCall ?? false)) else {
                 return []
             }
             guard case .chatList(.root) = self.location else {
@@ -609,6 +610,7 @@ public final class ChatListContainerNode: ASDisplayNode, ASGestureRecognizerDele
         let canOpenStoryCamera = self.validLayout?.0.metrics.widthClass == .compact
             && self.availableFilters.first?.id == self.selectedId
             && !recognizer.currentAllowedDirections.intersection(.right).isEmpty
+            && ImpulseFeatures.STORIES_POSTING
             && self.controller?.isStoryPostingAvailable == true
             && !(self.context.sharedContext.callManager?.hasActiveCall ?? false)
         let hasLiveStream = canOpenStoryCamera && self.controller?.chatListHeaderView()?.storyPeerListView()?.isLiveStreaming == true

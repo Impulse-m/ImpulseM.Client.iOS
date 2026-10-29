@@ -40,6 +40,7 @@ import ForumCreateTopicScreen
 import AnimationUI
 import ChatTitleView
 import PeerInfoUI
+import ImpulseFeatures
 import ComponentDisplayAdapters
 import ChatListHeaderComponent
 import NavigationBarComponent
@@ -328,6 +329,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController 
             containerNode: self.chatListDisplayNode.mainContainerNode,
             isReorderingTabs: self.isReorderingTabsValue.get(),
             storyPostingAvailable: self.storyPostingAvailabilityValue.get() |> map { availability -> Bool in
+                guard ImpulseFeatures.STORIES_POSTING else {
+                    return false
+                }
                 switch availability {
                 case .enabled, .premium:
                     return true
@@ -775,6 +779,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController 
         }
         |> distinctUntilChanged
         |> map { appConfiguration -> StoriesConfiguration.PostingAvailability in
+            guard ImpulseFeatures.STORIES_POSTING else {
+                return .disabled
+            }
             let storiesConfiguration = StoriesConfiguration.with(appConfiguration: appConfiguration)
             return storiesConfiguration.posting
         }
@@ -6693,6 +6700,9 @@ public class ChatListControllerImpl: TelegramBaseController, ChatListController 
     }
     
     var isStoryPostingAvailable: Bool {
+        guard ImpulseFeatures.STORIES_POSTING else {
+            return false
+        }
         guard !self.context.isFrozen else {
             return false
         }

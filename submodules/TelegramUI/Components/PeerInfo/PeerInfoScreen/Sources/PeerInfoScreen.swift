@@ -121,6 +121,7 @@ import UrlWhitelist
 import SideColumnLayout
 import NavigationBarNode
 import NavigationExpansionTransition
+import ImpulseFeatures
 
 public enum PeerInfoAvatarEditingMode {
     case generic
@@ -1482,10 +1483,10 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
         }
         
         self.paneContainerNode.openAddStory = { [weak self] in
-            guard let self else {
+            guard ImpulseFeatures.STORIES_POSTING, let self else {
                 return
             }
-            
+
             self.performNavigationButtonAction?(.postStory, nil, nil)
         }
 
@@ -2131,6 +2132,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             case .qrCode:
                 strongSelf.openQrCode(fromNavigationButton: true)
             case .postStory:
+                guard ImpulseFeatures.STORIES_POSTING else {
+                    break
+                }
                 var sourceFrame: CGRect?
                 if let source {
                     sourceFrame = source.view.convert(source.bounds, to: strongSelf.view)
@@ -2587,23 +2591,25 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             
             let _ = context.engine.peers.requestRecommendedChannels(peerId: peerId, forceUpdate: true).startStandalone()
             
-            self.boostStatusDisposable = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
-            |> mapToSignal { peer -> Signal<ChannelBoostStatus?, NoError> in
-                if case let .channel(channel) = peer {
-                    if case .broadcast = channel.info, (channel.flags.contains(.isCreator) || channel.adminRights != nil) {
-                        return context.engine.peers.getChannelBoostStatus(peerId: peerId)
-                    } else if case .group = channel.info {
-                        return context.engine.peers.getChannelBoostStatus(peerId: peerId)
+            if ImpulseFeatures.BOOSTS {
+                self.boostStatusDisposable = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: peerId))
+                |> mapToSignal { peer -> Signal<ChannelBoostStatus?, NoError> in
+                    if case let .channel(channel) = peer {
+                        if case .broadcast = channel.info, (channel.flags.contains(.isCreator) || channel.adminRights != nil) {
+                            return context.engine.peers.getChannelBoostStatus(peerId: peerId)
+                        } else if case .group = channel.info {
+                            return context.engine.peers.getChannelBoostStatus(peerId: peerId)
+                        }
                     }
+                    return .single(nil)
                 }
-                return .single(nil)
+                |> deliverOnMainQueue).start(next: { [weak self] boostStatus in
+                    guard let self else {
+                        return
+                    }
+                    self.boostStatus = boostStatus
+                })
             }
-            |> deliverOnMainQueue).start(next: { [weak self] boostStatus in
-                guard let self else {
-                    return
-                }
-                self.boostStatus = boostStatus
-            })
         }
         
         if peerId.namespace == Namespaces.Peer.CloudUser {
@@ -3234,6 +3240,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
     }
     
     func openStartSecretChat() {
+        guard ImpulseFeatures.SECRET_CHATS else {
+            return
+        }
         guard let controller = self.controller, !controller.presentAccountFrozenInfoIfNeeded() else {
             return
         }
