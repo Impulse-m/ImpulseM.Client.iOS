@@ -31,6 +31,7 @@ import AvatarEditorScreen
 import PeerSelectionScreen
 import DeviceModel
 import DebugSettingsUI
+import ImpulseFeatures
 
 enum SettingsSearchableItemIcon {
     case profile
@@ -779,22 +780,24 @@ private func premiumSearchableItems(context: AccountContext) -> [SettingsSearcha
         )
     )
     
-    items.append(
-        SettingsSearchableItem(
-            id: "stars",
-            title: strings.Settings_Stars,
-            alternate: [],
-            icon: .stars,
-            breadcrumbs: [],
-            present: { context, _, present in
-                guard let starsContext = context.starsContext else {
-                    return
+    if ImpulseFeatures.STARS_AND_TON {
+        items.append(
+            SettingsSearchableItem(
+                id: "stars",
+                title: strings.Settings_Stars,
+                alternate: [],
+                icon: .stars,
+                breadcrumbs: [],
+                present: { context, _, present in
+                    guard let starsContext = context.starsContext else {
+                        return
+                    }
+                    let controller = context.sharedContext.makeStarsTransactionsScreen(context: context, starsContext: starsContext)
+                    present(.push, controller)
                 }
-                let controller = context.sharedContext.makeStarsTransactionsScreen(context: context, starsContext: starsContext)
-                present(.push, controller)
-            }
+            )
         )
-    )
+    }
     
     items.append(
         SettingsSearchableItem(
@@ -899,7 +902,7 @@ private func premiumSearchableItems(context: AccountContext) -> [SettingsSearcha
             canJoinRefProgram = value
         }
     }
-    if canJoinRefProgram {
+    if canJoinRefProgram && ImpulseFeatures.STARS_AND_TON {
         items.append(
             SettingsSearchableItem(
                 id: "stars/earn",
@@ -918,22 +921,24 @@ private func premiumSearchableItems(context: AccountContext) -> [SettingsSearcha
         )
     }
     
-    items.append(
-        SettingsSearchableItem(
-            id: "ton",
-            title: strings.Settings_MyTon,
-            alternate: [],
-            icon: .ton,
-            breadcrumbs: [],
-            present: { context, _, present in
-                guard let tonContext = context.tonContext else {
-                    return
+    if ImpulseFeatures.STARS_AND_TON {
+        items.append(
+            SettingsSearchableItem(
+                id: "ton",
+                title: strings.Settings_MyTon,
+                alternate: [],
+                icon: .ton,
+                breadcrumbs: [],
+                present: { context, _, present in
+                    guard let tonContext = context.tonContext else {
+                        return
+                    }
+                    let controller = context.sharedContext.makeStarsTransactionsScreen(context: context, starsContext: tonContext)
+                    present(.push, controller)
                 }
-                let controller = context.sharedContext.makeStarsTransactionsScreen(context: context, starsContext: tonContext)
-                present(.push, controller)
-            }
+            )
         )
-    )
+    }
     
     items.append(
         SettingsSearchableItem(
@@ -3086,18 +3091,20 @@ private func privacySearchableItems(context: AccountContext, privacySettings: Ac
             }
         )
     )
-    items.append(
-        SettingsSearchableItem(
-            id: "privacy/open-links",
-            title: strings.ChatSettings_OpenLinksIn,
-            alternate: synonyms(strings.SettingsSearch_Synonyms_ChatSettings_OpenLinksIn),
-            icon: icon,
-            breadcrumbs: [strings.Settings_PrivacySettings],
-            present: { context, _, present in
-                present(.push, webBrowserSettingsController(context: context))
-            }
+    if ImpulseFeatures.BROWSER_SETTINGS {
+        items.append(
+            SettingsSearchableItem(
+                id: "privacy/open-links",
+                title: strings.ChatSettings_OpenLinksIn,
+                alternate: synonyms(strings.SettingsSearch_Synonyms_ChatSettings_OpenLinksIn),
+                icon: icon,
+                breadcrumbs: [strings.Settings_PrivacySettings],
+                present: { context, _, present in
+                    present(.push, webBrowserSettingsController(context: context))
+                }
+            )
         )
-    )
+    }
     items.append(
         SettingsSearchableItem(
             id: "privacy/data-settings/delete-synced",
@@ -4161,6 +4168,10 @@ private func languageSearchableItems(context: AccountContext, localizations: [Lo
 }
 
 private func helpSearchableItems(context: AccountContext) -> [SettingsSearchableItem] {
+    guard ImpulseFeatures.HELP_SECTION else {
+        return []
+    }
+
     let presentationData = context.sharedContext.currentPresentationData.with { $0 }
     let strings = presentationData.strings
     

@@ -17,6 +17,7 @@ import PasswordSetupUI
 import InstantPageCache
 import WalletContext
 import UndoUI
+import ImpulseFeatures
 
 extension PeerInfoScreenNode {
     func openSettings(section: PeerInfoSettingsSection) {
@@ -179,6 +180,9 @@ extension PeerInfoScreenNode {
         case .watch:
             push(watchSettingsController(context: self.context))
         case .support:
+            guard ImpulseFeatures.HELP_SECTION else {
+                break
+            }
             let supportPeer = Promise<EnginePeer.Id?>()
             supportPeer.set(context.engine.peers.supportPeerId())
             
@@ -196,6 +200,9 @@ extension PeerInfoScreenNode {
                     }))
                 })]), in: .window(.root))
         case .faq:
+            guard ImpulseFeatures.HELP_SECTION else {
+                break
+            }
             self.openFaq()
         case .tips:
             self.openTips()
@@ -294,10 +301,16 @@ extension PeerInfoScreenNode {
             }
             self.context.sharedContext.openExternalUrl(context: self.context, urlContext: .generic, url: url, forceExternal: !url.hasPrefix("tg://") && !url.contains("?start="), presentationData: self.context.sharedContext.currentPresentationData.with({$0}), navigationController: controller.navigationController as? NavigationController, dismissInput: {})
         case .stars:
+            guard ImpulseFeatures.STARS_AND_TON else {
+                break
+            }
             if let starsContext = self.controller?.starsContext {
                 push(self.context.sharedContext.makeStarsTransactionsScreen(context: self.context, starsContext: starsContext))
             }
         case .ton:
+            guard ImpulseFeatures.STARS_AND_TON else {
+                break
+            }
             if let tonContext = self.controller?.tonContext {
                 push(self.context.sharedContext.makeStarsTransactionsScreen(context: self.context, starsContext: tonContext))
             }
