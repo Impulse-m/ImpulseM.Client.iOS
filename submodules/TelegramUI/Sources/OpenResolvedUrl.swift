@@ -45,6 +45,7 @@ import AuthConfirmationScreen
 import OpenInExternalAppUI
 import CreateBotScreen
 import WalletSendScreen
+import ImpulseFeatures
 
 private func defaultNavigationForPeerId(_ peerId: EnginePeer.Id?, navigation: ChatControllerInteractionNavigateToPeer) -> ChatControllerInteractionNavigateToPeer {
     if case .default = navigation {
@@ -617,6 +618,9 @@ func openResolvedUrlImpl(
             dismissInput()
             present(LanguageLinkPreviewController(context: context, identifier: identifier), nil)
         case let .proxy(host, port, username, password, secret):
+            guard ImpulseFeatures.PROXY else {
+                break
+            }
             let server: ProxyServerSettings
             if let secret = secret {
                 server = ProxyServerSettings(host: host, port: abs(port), connection: .mtp(secret: secret))
@@ -629,6 +633,9 @@ func openResolvedUrlImpl(
             let controller = ProxyServerPreviewScreen(context: context, server: server)
             navigationController?.pushViewController(controller)
         case let .webProxy(host, path, secret):
+            guard ImpulseFeatures.PROXY else {
+                break
+            }
             let server = ProxyServerSettings(host: host, port: 443, connection: .web(secret: secret, path: path))
 
             dismissInput()
