@@ -49,6 +49,28 @@ enum GroupCallLiveKitJoinParser {
     }
 
 
+    /// The answer of the main group join on macOS. A broadcast answer (`stream` set to true) is refused.
+    /// Any other answer must pass `parse(json:callId:)`. The answer is returned unchanged, and nothing from it is logged.
+    static func mainJoinParams(json: String, callId: Int64) -> String? {
+        guard let data: Data = json.data(using: .utf8) else {
+            return nil
+        }
+        guard let object: Any = try? JSONSerialization.jsonObject(with: data, options: []) else {
+            return nil
+        }
+        guard let root: [String: Any] = object as? [String: Any] else {
+            return nil
+        }
+        if let stream: Bool = root["stream"] as? Bool, stream {
+            return nil
+        }
+        guard parse(json: json, callId: callId) != nil else {
+            return nil
+        }
+        return json
+    }
+
+
     /// The join answer of a presentation (screencast) connection. The LiveKit parameters are validated and returned unchanged.
     /// The endpoint of the own presentation is read from the participant list of the answer, when the answer carries it.
     static func screencastJoinResult(

@@ -70,4 +70,37 @@ final class GroupCallsLiveKitJoinTests: XCTestCase {
         XCTAssertNil(GroupCallLiveKitJoinParser.parse(json: fragmentJSON, callId: 42))
         XCTAssertNil(GroupCallLiveKitJoinParser.parse(json: spaceJSON, callId: 42))
     }
+
+    func testMainJoinReturnsValidatedLiveKitJSONUnchanged() {
+        XCTAssertEqual(GroupCallLiveKitJoinParser.mainJoinParams(json: validJSON, callId: 42), validJSON)
+    }
+
+    func testMainJoinRefusesBroadcastAnswer() {
+        let json: String = "{\"stream\":true,\"livekit\":{\"url\":\"wss://lk.example.org\",\"token\":\"t\",\"room\":\"g.42\"}}"
+
+        XCTAssertNil(GroupCallLiveKitJoinParser.mainJoinParams(json: json, callId: 42))
+    }
+
+    func testMainJoinRefusesRtmpBroadcastAnswer() {
+        let json: String = "{\"stream\":true,\"rtmp\":true}"
+
+        XCTAssertNil(GroupCallLiveKitJoinParser.mainJoinParams(json: json, callId: 42))
+    }
+
+    func testMainJoinRefusesTgcallsShapedAnswer() {
+        let json: String = "{\"ssrc\":12345,\"ssrc-groups\":[]}"
+
+        XCTAssertNil(GroupCallLiveKitJoinParser.mainJoinParams(json: json, callId: 42))
+    }
+
+    func testMainJoinRefusesInvalidLiveKitAnswer() {
+        XCTAssertNil(GroupCallLiveKitJoinParser.mainJoinParams(json: validJSON, callId: 43))
+        XCTAssertNil(GroupCallLiveKitJoinParser.mainJoinParams(json: "not json", callId: 42))
+    }
+
+    func testMainJoinAcceptsStreamFlagFalse() {
+        let json: String = "{\"stream\":false,\"livekit\":{\"url\":\"wss://lk.example.org\",\"token\":\"t\",\"room\":\"g.42\"}}"
+
+        XCTAssertEqual(GroupCallLiveKitJoinParser.mainJoinParams(json: json, callId: 42), json)
+    }
 }

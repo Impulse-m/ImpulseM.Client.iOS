@@ -836,6 +836,12 @@ func _internal_joinGroupCall(account: Account, peerId: PeerId?, joinAs: PeerId?,
                         state.adminIds.insert(account.peerId)
                     }
                     
+                    #if os(macOS)
+                    guard GroupCallLiveKitJoinParser.mainJoinParams(json: parsedClientParams, callId: callId) != nil else {
+                        return .fail(.error(.generic))
+                    }
+                    let connectionMode: JoinGroupCallResult.ConnectionMode = .rtc
+                    #else
                     let connectionMode: JoinGroupCallResult.ConnectionMode
                     if let clientParamsData = parsedClientParams.data(using: .utf8), let dict = (try? JSONSerialization.jsonObject(with: clientParamsData, options: [])) as? [String: Any] {
                         if let stream = dict["stream"] as? Bool, stream {
@@ -850,7 +856,8 @@ func _internal_joinGroupCall(account: Account, peerId: PeerId?, joinAs: PeerId?,
                     } else {
                         connectionMode = .broadcast(isExternalStream: false)
                     }
-                    
+                    #endif
+
                     return account.postbox.transaction { transaction -> Signal<JoinGroupCallResult, InternalJoinError> in
                         if let peerId {
                             transaction.updatePeerCachedData(peerIds: Set([peerId]), update: { _, cachedData -> CachedPeerData? in
