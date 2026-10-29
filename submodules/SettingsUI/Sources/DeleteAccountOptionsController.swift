@@ -17,6 +17,7 @@ import PremiumUI
 import PasswordSetupUI
 import StorageUsageScreen
 import AlertComponent
+import ImpulseFeatures
 
 private struct DeleteAccountOptionsArguments {
     let changePhoneNumber: () -> Void
@@ -165,7 +166,9 @@ private func deleteAccountOptionsEntries(presentationData: PresentationData, can
     entries.append(.clearSyncedContacts(presentationData.theme, presentationData.strings.DeleteAccount_Options_ClearSyncedContactsTitle, presentationData.strings.DeleteAccount_Options_ClearSyncedContactsText))
     entries.append(.deleteChats(presentationData.theme, presentationData.strings.DeleteAccount_Options_DeleteChatsTitle, presentationData.strings.DeleteAccount_Options_DeleteChatsText))
 
-    entries.append(.contactSupport(presentationData.theme, presentationData.strings.DeleteAccount_Options_ContactSupportTitle, presentationData.strings.DeleteAccount_Options_ContactSupportText))
+    if ImpulseFeatures.HELP_SECTION {
+        entries.append(.contactSupport(presentationData.theme, presentationData.strings.DeleteAccount_Options_ContactSupportTitle, presentationData.strings.DeleteAccount_Options_ContactSupportText))
+    }
 
     entries.append(.deleteAccount(presentationData.theme, presentationData.strings.DeleteAccount_DeleteMyAccount))
 

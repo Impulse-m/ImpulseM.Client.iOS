@@ -17,6 +17,7 @@ import PremiumUI
 import StorageUsageScreen
 import TelegramStringFormatting
 import WalletContext
+import ImpulseFeatures
 
 private struct LogoutOptionsItemArguments {
     let addAccount: () -> Void
@@ -122,7 +123,9 @@ private func logoutOptionsEntries(presentationData: PresentationData, canAddAcco
     }
     entries.append(.clearCache(presentationData.theme, presentationData.strings.LogoutOptions_ClearCacheTitle, presentationData.strings.LogoutOptions_ClearCacheText))
     entries.append(.changePhoneNumber(presentationData.theme, presentationData.strings.LogoutOptions_ChangePhoneNumberTitle, presentationData.strings.LogoutOptions_ChangePhoneNumberText))
-    entries.append(.contactSupport(presentationData.theme, presentationData.strings.LogoutOptions_ContactSupportTitle, presentationData.strings.LogoutOptions_ContactSupportText))
+    if ImpulseFeatures.HELP_SECTION {
+        entries.append(.contactSupport(presentationData.theme, presentationData.strings.LogoutOptions_ContactSupportTitle, presentationData.strings.LogoutOptions_ContactSupportText))
+    }
     entries.append(.logout(presentationData.theme, presentationData.strings.LogoutOptions_LogOut))
     entries.append(.logoutInfo(presentationData.theme, presentationData.strings.LogoutOptions_LogOutInfo))
     return entries
