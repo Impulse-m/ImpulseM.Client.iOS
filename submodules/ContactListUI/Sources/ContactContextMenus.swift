@@ -11,6 +11,7 @@ import OverlayStatusController
 import LocalizedPeerData
 import UndoUI
 import TooltipUI
+import ImpulseFeatures
 
 func contactContextMenuItems(context: AccountContext, peerId: EnginePeer.Id, contactsController: ContactsController?, isStories: Bool) -> Signal<[ContextMenuItem], NoError> {
     let strings = context.sharedContext.currentPresentationData.with({ $0 }).strings
@@ -117,7 +118,7 @@ func contactContextMenuItems(context: AccountContext, peerId: EnginePeer.Id, con
             })
         })))
         
-        var canStartSecretChat = true
+        var canStartSecretChat = ImpulseFeatures.SECRET_CHATS
         if case let .user(user) = peer, user.flags.contains(.isSupport) {
             canStartSecretChat = false
         }
