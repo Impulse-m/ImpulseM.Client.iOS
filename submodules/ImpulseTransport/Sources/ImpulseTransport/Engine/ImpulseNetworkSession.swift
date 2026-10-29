@@ -116,6 +116,7 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
         delegate: (any ImpulseNetworkSessionDelegate)?,
         clock: any ImpulseRequestClock = ImpulseSystemRequestClock(),
         loginGate: ImpulseLoginGate? = nil,
+        identityTag: (@Sendable () async -> String?)? = nil,
         sessionInstaller: ImpulseSessionInstaller? = nil
     ) {
         self.datacenterId = datacenterId
@@ -141,7 +142,8 @@ public final class ImpulseNetworkSession: @unchecked Sendable {
             signedIn: signedIn,
             onAuthorizationRequired: authorizationRequired,
             clock: clock,
-            loginGate: loginGate
+            loginGate: loginGate,
+            identityTag: identityTag
         )
     }
 

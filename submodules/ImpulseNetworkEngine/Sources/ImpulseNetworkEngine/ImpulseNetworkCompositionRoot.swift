@@ -264,7 +264,8 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             declarations: declarer,
             signedIn: store.isLoggedIn,
             onAuthorizationRequired: {},
-            loginGate: loginGate
+            loginGate: loginGate,
+            identityTag: ImpulseNetworkCompositionRoot.identityTagSource(identity: identity)
         )
         let telemetry: ImpulseTelemetry = ImpulseTelemetry(
             sink: ImpulseRequestTelemetrySink(transcoder: transcoder, requester: requestService)
@@ -378,6 +379,15 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
 
         case .worker(let masterDatacenterId, let isMedia, let isCdn):
             return .worker(masterDatacenterId: masterDatacenterId, isMedia: isMedia, isCdn: isCdn)
+        }
+    }
+
+
+    /// The diagnostic tag of the identity the socket presents: the hash of its subject and its `orig_iat`. It never carries the token.
+    static func identityTagSource(identity: ImpulseIdentityManager) -> @Sendable () async -> String? {
+        return { () async -> String? in
+            let token: String? = await identity.current()
+            return ImpulseDiagnostics.identityTag(token: token)
         }
     }
 
@@ -565,6 +575,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             signedIn: self.sessionStore.isLoggedIn,
             delegate: events,
             loginGate: self.loginGate,
+            identityTag: ImpulseNetworkCompositionRoot.identityTagSource(identity: self.identity),
             sessionInstaller: self.sessionInstaller
         )
     }

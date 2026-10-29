@@ -48,6 +48,9 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
         isAppExtension: Bool
     ) -> NetworkEngine? {
         Logger.shared.log("ImpulseNetwork", "The engine is created (app extension: \(isAppExtension))")
+        ImpulseDiagnostics.setSink({ (message: String) -> Void in
+            Logger.shared.log("ImpulseNetwork", message)
+        })
 
         let root: ImpulseNetworkCompositionRoot
         do {

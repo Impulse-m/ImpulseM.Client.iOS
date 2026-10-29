@@ -435,6 +435,7 @@ public final class ImpulseRequestService: Sendable {
     private let routeEpoch: ImpulseRouteEpochCounter
     private let onAuthorizationRequired: @Sendable () -> Void
     private let clock: any ImpulseRequestClock
+    private let identityTag: (@Sendable () async -> String?)?
     private static let notInitializedText: String = "CONNECTION_NOT_INITED"
     /// The failure a call ends with when its deadline passes before any carrier failure. It has no server answer, so
     /// it is a timeout, the same as a carrier failure without a code.
@@ -467,7 +468,8 @@ public final class ImpulseRequestService: Sendable {
         signedIn: Bool,
         onAuthorizationRequired: @escaping @Sendable () -> Void,
         clock: any ImpulseRequestClock = ImpulseSystemRequestClock(),
-        loginGate: ImpulseLoginGate? = nil
+        loginGate: ImpulseLoginGate? = nil,
+        identityTag: (@Sendable () async -> String?)? = nil
     ) {
         self.session = session
         self.updateCarrier = updateCarrier
@@ -478,6 +480,7 @@ public final class ImpulseRequestService: Sendable {
         self.routeEpoch = ImpulseRouteEpochCounter()
         self.onAuthorizationRequired = onAuthorizationRequired
         self.clock = clock
+        self.identityTag = identityTag
     }
 
 
@@ -527,7 +530,12 @@ public final class ImpulseRequestService: Sendable {
 
         let route: ImpulseCarrierRoute = ImpulseCarrier.route(method: request.method, signedIn: signedIn)
         if case .refused(let refusal) = route {
+            ImpulseDiagnostics.log("A call is refused locally: \(request.method), signed in: \(signedIn)")
             return .failure(.rpc(refusal))
+        }
+        if !signedIn, ImpulseMethodClasses.identitySocketMethods.contains(request.method), let tagOf: (@Sendable () async -> String?) = self.identityTag {
+            let tag: String? = await tagOf()
+            ImpulseDiagnostics.log("A call goes on the identity: \(request.method), identity \(tag ?? "none")")
         }
         if Task.isCancelled {
             return .failure(.canceled)

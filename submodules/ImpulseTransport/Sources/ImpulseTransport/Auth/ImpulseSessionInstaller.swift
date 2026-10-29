@@ -109,6 +109,7 @@ public actor ImpulseSessionInstaller {
         self.realtime.apply(plan: ImpulseSessionInstaller.userLanePlan(userId: userId))
         self.setSignedIn(true)
         await self.declarer?.sessionChanged()
+        ImpulseDiagnostics.log("The session is installed by \(method) for user \(userId)")
         return userId
     }
 
