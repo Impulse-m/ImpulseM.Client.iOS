@@ -13,6 +13,8 @@ public enum ImpulseMediaFailure: Error, Equatable {
     case queueFull
     /// A failure of the media carrier, as the carrier reported it.
     case carrier(ImpulseCarrierFailure)
+    /// The route changed while the call waited for the config. The call was not sent.
+    case routeChanged
 
 
     /// The text of the failure. The no-config text names the method, as the media fleet reports it.
@@ -28,6 +30,8 @@ public enum ImpulseMediaFailure: Error, Equatable {
             return "media fleet queue is full"
         case .carrier:
             return "media carrier failure"
+        case .routeChanged:
+            return "media route changed"
         }
     }
 }
@@ -193,6 +197,15 @@ public final class ImpulseMediaFleet {
     }
 
 
+    /// Resets the fleet for a route change: the carrier retires, the waiting calls fail with `routeChanged`, and the fleet
+    /// keeps accepting calls. The next call creates a carrier from the factory. A closed fleet is not reset.
+    public func reset() {
+        self.queue.async {
+            self.resetOnQueue()
+        }
+    }
+
+
     /// Returns once every block queued before this call has run.
     internal func drainQueue() {
         self.queue.sync {}
@@ -309,13 +322,28 @@ public final class ImpulseMediaFleet {
             return
         }
         self.closed = true
+        self.retireOnQueue(failing: .closed)
+    }
+
+
+    private func resetOnQueue() {
+        guard !self.closed else {
+            return
+        }
+        self.retireOnQueue(failing: .routeChanged)
+    }
+
+
+    /// Retires the carrier and fails the calls that wait for the config with `failure`. The endpoint stays, so the next
+    /// call builds a new carrier from it.
+    private func retireOnQueue(failing failure: ImpulseMediaFailure) {
         let retired: ImpulseMediaTransport? = self.transport
         self.transport = nil
         let drained: [ImpulseMediaCallState] = self.waiting
         self.waiting = []
         retired?.close()
         for state: ImpulseMediaCallState in drained {
-            self.settle(state, .failure(.closed))
+            self.settle(state, .failure(failure))
         }
     }
 

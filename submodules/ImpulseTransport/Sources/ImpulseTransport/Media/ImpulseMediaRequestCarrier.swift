@@ -50,7 +50,7 @@ public final class ImpulseMediaRequestCarrier: ImpulseRequestCarrier, @unchecked
         case .carrier(let carrierFailure):
             return carrierFailure
 
-        case .noConfig, .closed, .requestTooLarge, .queueFull:
+        case .noConfig, .closed, .requestTooLarge, .queueFull, .routeChanged:
             return ImpulseSdkFailure.networkFailure
         }
     }

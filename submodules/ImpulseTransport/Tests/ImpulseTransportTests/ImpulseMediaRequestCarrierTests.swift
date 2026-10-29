@@ -181,5 +181,9 @@ final class ImpulseMediaRequestCarrierTests: XCTestCase {
             ImpulseMediaRequestCarrier.carrierFailure(from: .requestTooLarge(bytes: 600_000)),
             ImpulseSdkFailure.networkFailure
         )
+        XCTAssertEqual(
+            ImpulseMediaRequestCarrier.carrierFailure(from: .routeChanged),
+            ImpulseSdkFailure.networkFailure
+        )
     }
 }
