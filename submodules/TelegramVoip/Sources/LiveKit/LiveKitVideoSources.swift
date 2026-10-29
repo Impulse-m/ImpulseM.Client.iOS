@@ -16,10 +16,12 @@ public enum LiveKitVideoSources {
     /// Creates a camera track for the back or front capture code. Returns nil for the screen code.
     ///
     /// The device identifier selects a specific camera on macOS. An empty identifier, or one that no device owns, falls back to the position.
+    ///
+    /// The track is created on the RTC executor, so the calling task suspends instead of blocking its thread.
     public static func createCameraTrack(
         captureCode: LiveKitCaptureCode,
         deviceId: String
-    ) -> LocalVideoTrack? {
+    ) async -> LocalVideoTrack? {
         guard let position: AVCaptureDevice.Position = cameraPosition(captureCode: captureCode) else {
             return nil
         }
@@ -28,7 +30,7 @@ public enum LiveKitVideoSources {
             device: device,
             position: position
         )
-        return LocalVideoTrack.createCameraTrack(options: options)
+        return await LocalVideoTrack.createCameraTrack(options: options)
     }
 
 
@@ -49,8 +51,8 @@ public enum LiveKitVideoSources {
     @available(macOS 12.3, *)
     public static func createMacOSScreenShareTrack(
         source: MacOSScreenCaptureSource
-    ) -> LocalVideoTrack {
-        return LocalVideoTrack.createMacOSScreenShareTrack(source: source)
+    ) async -> LocalVideoTrack {
+        return await LocalVideoTrack.createMacOSScreenShareTrack(source: source)
     }
     #endif
 

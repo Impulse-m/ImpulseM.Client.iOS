@@ -63,6 +63,7 @@ public final class OngoingCallVideoCapturer {
     private var onFatalError: (() -> Void)?
     private var onPause: ((Bool) -> Void)?
     private var outgoingBridge: LiveKitOutgoingVideoBridge?
+    private var trackTask: Task<LocalVideoTrack?, Never>?
 
 
     /// A camera capturer. An empty identifier selects the default camera. The camera track is created on first use.
@@ -70,27 +71,38 @@ public final class OngoingCallVideoCapturer {
         self.deviceId = deviceId
         self.captureCode = .front
         self.track = nil
+        self.trackTask = nil
     }
 
 
     /// A screen share capturer for a source chosen with `MacOSScreenCapturer.sources(for:)`. Screen share needs macOS 12.3.
+    ///
+    /// The track is created in the background and `track` stays nil until it is ready.
     @available(macOS 12.3, *)
     public init(screenSource: MacOSScreenCaptureSource) {
         self.deviceId = ""
         self.captureCode = .screen
-        self.track = LiveKitVideoSources.createMacOSScreenShareTrack(source: screenSource)
+        self.track = nil
+        let captureSource: MacOSScreenCaptureSource = screenSource
+        self.trackTask = Task { @MainActor [weak self] () -> LocalVideoTrack? in
+            let created: LocalVideoTrack = await LiveKitVideoSources.createMacOSScreenShareTrack(source: captureSource)
+            self?.track = created
+            return created
+        }
     }
 
 
     /// Starts the local video, or pauses it. A pause mutes the track and stops the capture.
+    ///
+    /// The camera track is created first if it does not exist yet, so the change takes effect after that.
     public func setIsVideoEnabled(_ value: Bool) {
-        guard let track: LocalVideoTrack = self.ensureTrack() else {
-            return
-        }
-        let pauseHandler: ((Bool) -> Void)? = self.onPause
-        let fatalErrorHandler: (() -> Void)? = self.onFatalError
-        pauseHandler?(!value)
-        Task {
+        Task { @MainActor in
+            guard let track: LocalVideoTrack = await self.ensureTrack() else {
+                return
+            }
+            let pauseHandler: ((Bool) -> Void)? = self.onPause
+            let fatalErrorHandler: (() -> Void)? = self.onFatalError
+            pauseHandler?(!value)
             do {
                 if value {
                     try await track.start()
@@ -109,43 +121,47 @@ public final class OngoingCallVideoCapturer {
 
 
     /// Renders the local track into a LiveKit view and returns it with the closures of the presentation view.
+    ///
+    /// The completion runs on the main actor, after the track is ready. It receives nil if no track exists.
     public func makeOutgoingVideoView(completion: @escaping (OngoingCallContextPresentationCallVideoView?) -> Void) {
-        guard let track: LocalVideoTrack = self.ensureTrack() else {
-            completion(nil)
-            return
-        }
-        let videoView: VideoView = VideoView(frame: .zero)
-        videoView.track = track
-        videoView.layoutMode = .fit
-        let bridge: LiveKitOutgoingVideoBridge = LiveKitOutgoingVideoBridge(track: track)
-        self.outgoingBridge = bridge
-        videoView.add(delegate: bridge)
-        let presentationView: OngoingCallContextPresentationCallVideoView = OngoingCallContextPresentationCallVideoView(
-            view: videoView,
-            setOnFirstFrameReceived: { callback in
-                bridge.onFirstFrame = callback
-            },
-            getOrientation: {
-                return .rotation0
-            },
-            getAspect: {
-                return bridge.aspect
-            },
-            setOnOrientationUpdated: { _ in
-            },
-            setVideoContentMode: { gravity in
-                let isFill: Bool = gravity == .resizeAspectFill
-                videoView.layoutMode = isFill ? .fill : .fit
-            },
-            setOnIsMirroredUpdated: { _ in
-            },
-            setIsPaused: { paused in
-                videoView.isEnabled = !paused
-            },
-            renderToSize: { _, _ in
+        Task { @MainActor in
+            guard let track: LocalVideoTrack = await self.ensureTrack() else {
+                completion(nil)
+                return
             }
-        )
-        completion(presentationView)
+            let videoView: VideoView = VideoView(frame: .zero)
+            videoView.track = track
+            videoView.layoutMode = .fit
+            let bridge: LiveKitOutgoingVideoBridge = LiveKitOutgoingVideoBridge(track: track)
+            self.outgoingBridge = bridge
+            videoView.add(delegate: bridge)
+            let presentationView: OngoingCallContextPresentationCallVideoView = OngoingCallContextPresentationCallVideoView(
+                view: videoView,
+                setOnFirstFrameReceived: { callback in
+                    bridge.onFirstFrame = callback
+                },
+                getOrientation: {
+                    return .rotation0
+                },
+                getAspect: {
+                    return bridge.aspect
+                },
+                setOnOrientationUpdated: { _ in
+                },
+                setVideoContentMode: { gravity in
+                    let isFill: Bool = gravity == .resizeAspectFill
+                    videoView.layoutMode = isFill ? .fill : .fit
+                },
+                setOnIsMirroredUpdated: { _ in
+                },
+                setIsPaused: { paused in
+                    videoView.isEnabled = !paused
+                },
+                renderToSize: { _, _ in
+                }
+            )
+            completion(presentationView)
+        }
     }
 
 
@@ -185,13 +201,25 @@ public final class OngoingCallVideoCapturer {
     }
 
 
-    private func ensureTrack() -> LocalVideoTrack? {
+    /// Returns the local track, waiting for its creation if it is still pending. The camera track is created on the first call.
+    @MainActor
+    private func ensureTrack() async -> LocalVideoTrack? {
         if let existing: LocalVideoTrack = self.track {
             return existing
         }
-        let created: LocalVideoTrack? = LiveKitVideoSources.createCameraTrack(captureCode: self.captureCode, deviceId: self.deviceId)
-        self.track = created
-        return created
+        if self.trackTask == nil {
+            let captureCode: LiveKitCaptureCode = self.captureCode
+            let deviceId: String = self.deviceId
+            self.trackTask = Task { @MainActor [weak self] () -> LocalVideoTrack? in
+                let created: LocalVideoTrack? = await LiveKitVideoSources.createCameraTrack(captureCode: captureCode, deviceId: deviceId)
+                self?.track = created
+                return created
+            }
+        }
+        guard let pending: Task<LocalVideoTrack?, Never> = self.trackTask else {
+            return nil
+        }
+        return await pending.value
     }
 }
 

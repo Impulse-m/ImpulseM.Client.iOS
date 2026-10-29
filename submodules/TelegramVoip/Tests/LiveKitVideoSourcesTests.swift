@@ -1,4 +1,5 @@
 import XCTest
+import LiveKit
 @testable import TelegramVoip
 
 
@@ -10,8 +11,9 @@ final class LiveKitVideoSourcesTests: XCTestCase {
     }
 
 
-    func testScreenCodeCreatesNoCameraTrack() {
-        XCTAssertNil(LiveKitVideoSources.createCameraTrack(captureCode: .screen, deviceId: ""))
+    func testScreenCodeCreatesNoCameraTrack() async {
+        let track: LocalVideoTrack? = await LiveKitVideoSources.createCameraTrack(captureCode: .screen, deviceId: "")
+        XCTAssertNil(track)
     }
 
 
