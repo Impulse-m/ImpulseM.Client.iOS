@@ -166,3 +166,99 @@ public func updateProxySettingsInteractively(transaction: AccountManagerModifier
     })
     return hasChanges
 }
+
+/// The one-time notice about Telegram proxy settings that were dropped on the first launch of the ImpulseM proxy.
+/// Legacy records are not imported; `dismissed` is set once the user has seen and closed the notice.
+public struct ProxySettingsMigrationNotice: Codable, Equatable {
+    /// True when the migration dropped a legacy record, so the notice is due.
+    public var legacyRecordDropped: Bool
+    /// True once the user has dismissed the notice.
+    public var dismissed: Bool
+
+    public init(legacyRecordDropped: Bool, dismissed: Bool = false) {
+        self.legacyRecordDropped = legacyRecordDropped
+        self.dismissed = dismissed
+    }
+}
+
+extension NoticeEntryKey {
+    /// The account-manager notice that marks the proxy migration as run and holds its `ProxySettingsMigrationNotice`.
+    public static let impulseProxyMigration: NoticeEntryKey = {
+        let namespace: ValueBoxKey = ValueBoxKey(length: 4)
+        namespace.setInt32(0, value: 0x494D5058)
+        let key: ValueBoxKey = ValueBoxKey(length: 4)
+        key.setInt32(0, value: 1)
+        return NoticeEntryKey(namespace: namespace, key: key)
+    }()
+}
+
+/// What one run of the proxy migration does to the proxy settings record and to the notice.
+struct ProxySettingsMigrationStep: Equatable {
+    /// The record after the run. Nil when a legacy record was dropped or when there was none.
+    let proxySettings: PreferencesEntry?
+    /// True when this run dropped a legacy record.
+    let legacyRecordDropped: Bool
+    /// The notice to store, nil when the migration had already run and nothing changes.
+    let notice: ProxySettingsMigrationNotice?
+}
+
+/// The migration decision, without storage. A record that does not decode as `ImpulseProxyState` is a legacy
+/// `ProxySettings` record (or unreadable) and decodes to nothing: it is dropped. Once the notice exists the
+/// migration has run, so a later run changes nothing, even when a legacy record is found again.
+func proxySettingsMigrationStep(proxySettings: PreferencesEntry?, notice: ProxySettingsMigrationNotice?) -> ProxySettingsMigrationStep {
+    if notice != nil {
+        return ProxySettingsMigrationStep(proxySettings: proxySettings, legacyRecordDropped: false, notice: nil)
+    }
+    if let current: PreferencesEntry = proxySettings {
+        if current.get(ImpulseProxyState.self) != nil {
+            return ProxySettingsMigrationStep(proxySettings: current, legacyRecordDropped: false, notice: ProxySettingsMigrationNotice(legacyRecordDropped: false))
+        }
+        return ProxySettingsMigrationStep(proxySettings: nil, legacyRecordDropped: true, notice: ProxySettingsMigrationNotice(legacyRecordDropped: true))
+    }
+    return ProxySettingsMigrationStep(proxySettings: nil, legacyRecordDropped: false, notice: ProxySettingsMigrationNotice(legacyRecordDropped: false))
+}
+
+/// Runs the one-time proxy migration inside an accountManager transaction. Returns true when a legacy record was dropped.
+public func migrateLegacyProxySettings(transaction: AccountManagerModifier<TelegramAccountManagerTypes>) -> Bool {
+    let proxySettings: PreferencesEntry? = transaction.getSharedData(SharedDataKeys.proxySettings)
+    let notice: ProxySettingsMigrationNotice? = transaction.getNotice(NoticeEntryKey.impulseProxyMigration)?.get(ProxySettingsMigrationNotice.self)
+    let step: ProxySettingsMigrationStep = proxySettingsMigrationStep(proxySettings: proxySettings, notice: notice)
+    if step.legacyRecordDropped {
+        transaction.updateSharedData(SharedDataKeys.proxySettings, { _ in
+            return nil
+        })
+    }
+    if let stepNotice: ProxySettingsMigrationNotice = step.notice {
+        transaction.setNotice(NoticeEntryKey.impulseProxyMigration, CodableEntry(stepNotice))
+    }
+    return step.legacyRecordDropped
+}
+
+public func migrateLegacyProxySettings(accountManager: AccountManager<TelegramAccountManagerTypes>) -> Signal<Bool, NoError> {
+    return accountManager.transaction { transaction -> Bool in
+        return migrateLegacyProxySettings(transaction: transaction)
+    }
+}
+
+/// Whether the dropped-settings notice is due and not yet dismissed, for the proxy UI.
+public func proxySettingsMigrationNoticePending(accountManager: AccountManager<TelegramAccountManagerTypes>) -> Signal<Bool, NoError> {
+    return accountManager.transaction { transaction -> Bool in
+        let notice: ProxySettingsMigrationNotice? = transaction.getNotice(NoticeEntryKey.impulseProxyMigration)?.get(ProxySettingsMigrationNotice.self)
+        guard let notice: ProxySettingsMigrationNotice = notice else {
+            return false
+        }
+        return notice.legacyRecordDropped && !notice.dismissed
+    }
+}
+
+/// Marks the dropped-settings notice as dismissed. It stays a one-time notice: it is never due again.
+public func dismissProxySettingsMigrationNotice(accountManager: AccountManager<TelegramAccountManagerTypes>) -> Signal<Void, NoError> {
+    return accountManager.transaction { transaction -> Void in
+        let notice: ProxySettingsMigrationNotice? = transaction.getNotice(NoticeEntryKey.impulseProxyMigration)?.get(ProxySettingsMigrationNotice.self)
+        guard var updated: ProxySettingsMigrationNotice = notice, updated.legacyRecordDropped, !updated.dismissed else {
+            return
+        }
+        updated.dismissed = true
+        transaction.setNotice(NoticeEntryKey.impulseProxyMigration, CodableEntry(updated))
+    }
+}
