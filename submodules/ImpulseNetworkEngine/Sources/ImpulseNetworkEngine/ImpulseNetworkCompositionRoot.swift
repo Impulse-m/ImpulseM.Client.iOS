@@ -161,6 +161,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
     let mediaCarrier: ImpulseMediaRequestCarrier
     let declarer: ImpulseConnectionDeclarer
     let requestService: ImpulseRequestService
+    let sessionInstaller: ImpulseSessionInstaller
     let telemetry: ImpulseTelemetry
     let realtime: ImpulseRealtime
     let forwarder: ImpulseRealtimeForwarder
@@ -275,6 +276,18 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             }
         )
 
+        let sessionInstaller: ImpulseSessionInstaller = ImpulseSessionInstaller(
+            identity: identity,
+            tokens: tokens,
+            realtime: realtime,
+            mapping: inputs.mapping,
+            setSignedIn: { (signedIn: Bool) -> Void in
+                requestService.setSignedIn(signedIn)
+            },
+            credentials: nil,
+            declarer: nil
+        )
+
         link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials))
 
         let routeUpdateSocket: any ImpulseRouteUpdateSocket = seams?.updateSocket ?? ImpulseRootUpdateSocketAdapter(client: updateClient)
@@ -297,6 +310,7 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         self.mediaCarrier = mediaCarrier
         self.declarer = declarer
         self.requestService = requestService
+        self.sessionInstaller = sessionInstaller
         self.telemetry = telemetry
         self.realtime = realtime
         self.forwarder = forwarder
@@ -542,7 +556,8 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             poolCarrier: self.poolRequestCarrier,
             declarations: self.declarer,
             signedIn: self.sessionStore.isLoggedIn,
-            delegate: events
+            delegate: events,
+            sessionInstaller: self.sessionInstaller
         )
     }
 }
