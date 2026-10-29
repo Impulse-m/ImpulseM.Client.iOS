@@ -91,8 +91,8 @@ public enum ImpulseRequestFailure: Error, Equatable, Sendable {
     case network(ImpulseCarrierFailure)
     /// The request was cancelled before it produced a reply.
     case canceled
-    /// The route changed while the call was in flight. The service retries such a call without spending its budget,
-    /// so this failure is never delivered to the caller.
+    /// The route epoch advanced while the call was in flight. The service retries such a call without spending its
+    /// budget, so this failure is never delivered to the caller.
     case routeChanged
 }
 
@@ -224,48 +224,17 @@ public enum ImpulseRequestPolicy {
     }
 
 
-    /// The failure of a call that ended with `error`. While a route transition is open (`routeTransition`), a lost
-    /// connection, a closed media fleet, a disconnected pool main client or a media route change is `routeChanged`, and
-    /// the service retries it without spending the budget. Every other error keeps its carrier failure.
+    /// The failure of a call that ended with a carrier error and no server answer. When the route epoch advanced while the
+    /// call was in flight (`epochAdvanced`), the failure is `routeChanged`, whatever the error is: the classification is by
+    /// the epoch, not by the error type. Otherwise it is the carrier failure of the error.
     public static func failure(
         for error: Error,
-        routeTransition: Bool
+        epochAdvanced: Bool
     ) -> ImpulseRequestFailure {
-        if routeTransition && ImpulseRequestPolicy.isTransitionFailure(error) {
+        if epochAdvanced {
             return .routeChanged
         }
         return .network(ImpulseRequestPolicy.carrierFailure(from: error))
-    }
-
-
-    /// True for the errors a route change produces: the media route change and closed fleet, the disconnected pool main
-    /// client, and a carrier failure without a server answer (a lost connection).
-    private static func isTransitionFailure(_ error: Error) -> Bool {
-        if let mediaFailure: ImpulseMediaFailure = error as? ImpulseMediaFailure {
-            switch mediaFailure {
-            case .routeChanged, .closed:
-                return true
-
-            case .noConfig, .requestTooLarge, .queueFull, .carrier:
-                return false
-            }
-        }
-
-        if let poolFailure: ImpulsePoolFailure = error as? ImpulsePoolFailure {
-            switch poolFailure {
-            case .mainDisconnected:
-                return true
-
-            case .sessionEnded, .carrier:
-                return false
-            }
-        }
-
-        if let carrierResult: ImpulseCarrierFailure = error as? ImpulseCarrierFailure {
-            return carrierResult == ImpulseSdkFailure.networkFailure
-        }
-
-        return false
     }
 
 
@@ -427,26 +396,26 @@ internal final class ImpulseLoginGate: @unchecked Sendable {
 }
 
 
-/// Tells the service whether a route transition is open. The route owner opens it when the route changes and closes it
-/// once the connections are re-established on the new route.
-internal final class ImpulseRouteTransitionFlag: @unchecked Sendable {
+/// The route epoch of the service. The route owner advances it once per route change. A send stamps the epoch it runs
+/// under, and a failure of a send stamped with an older epoch is a route failure.
+internal final class ImpulseRouteEpochCounter: @unchecked Sendable {
     private let lock: NSLock = NSLock()
-    private var active: Bool = false
+    private var epoch: Int = 0
 
 
-    internal func setActive(_ value: Bool) {
+    internal func advance() {
         self.lock.lock()
-        self.active = value
+        self.epoch += 1
         self.lock.unlock()
     }
 
 
-    internal func isActive() -> Bool {
+    internal func current() -> Int {
         self.lock.lock()
         defer {
             self.lock.unlock()
         }
-        return self.active
+        return self.epoch
     }
 }
 
@@ -461,7 +430,7 @@ public final class ImpulseRequestService: Sendable {
     private let poolCarrier: any ImpulseRequestCarrier
     private let declarations: (any ImpulseDeclarationGate)?
     private let loginGate: ImpulseLoginGate
-    private let routeTransition: ImpulseRouteTransitionFlag
+    private let routeEpoch: ImpulseRouteEpochCounter
     private let onAuthorizationRequired: @Sendable () -> Void
     private let clock: any ImpulseRequestClock
     private static let notInitializedText: String = "CONNECTION_NOT_INITED"
@@ -503,7 +472,7 @@ public final class ImpulseRequestService: Sendable {
         self.poolCarrier = poolCarrier
         self.declarations = declarations
         self.loginGate = ImpulseLoginGate(isOpen: signedIn)
-        self.routeTransition = ImpulseRouteTransitionFlag()
+        self.routeEpoch = ImpulseRouteEpochCounter()
         self.onAuthorizationRequired = onAuthorizationRequired
         self.clock = clock
     }
@@ -515,10 +484,11 @@ public final class ImpulseRequestService: Sendable {
     }
 
 
-    /// Reports that a route transition opened or closed. While it is open, a call that fails without a server answer
-    /// is retried at once without spending its budget, and it is never delivered with that failure.
-    public func setRouteTransition(_ active: Bool) {
-        self.routeTransition.setActive(active)
+    /// Advances the route epoch. The route owner calls it once per route change, before it reconnects over the new route.
+    /// A call that sent under the older epoch and fails after the advance is a route failure: it does not spend its
+    /// budget, it waits the policy delay for its attempt number (never zero), and its next send takes the current epoch.
+    public func advanceRouteEpoch() {
+        self.routeEpoch.advance()
     }
 
 
@@ -618,6 +588,7 @@ public final class ImpulseRequestService: Sendable {
                 return .failure(.network(lastFailure))
             }
 
+            let sendEpoch: Int = self.routeEpoch.current()
             let settled: Result<[UInt8], ImpulseCarrierFailure> = await self.sendOnce(
                 request: request,
                 route: route,
@@ -632,14 +603,22 @@ public final class ImpulseRequestService: Sendable {
                     return .failure(.canceled)
                 }
                 guard let error: ImpulseRpcError = ImpulseCarrier.rpcError(from: failure, route: route) else {
+                    lastFailure = failure
                     let transitionFailure: ImpulseRequestFailure = ImpulseRequestPolicy.failure(
                         for: failure,
-                        routeTransition: self.routeTransition.isActive()
+                        epochAdvanced: self.routeEpoch.current() != sendEpoch
                     )
                     if case .routeChanged = transitionFailure {
+                        if let ended: ImpulseRequestFailure = await self.waitBeforeAttempt(
+                            seconds: ImpulseRequestPolicy.networkFailureSeconds(attempt: networkAttempt),
+                            deadline: deadline,
+                            endingWith: .network(failure)
+                        ) {
+                            return .failure(ended)
+                        }
+                        refreshDue = true
                         continue
                     }
-                    lastFailure = failure
                     if let ended: ImpulseRequestFailure = await self.waitAfterNetworkFailure(
                         method: request.method,
                         options: options,

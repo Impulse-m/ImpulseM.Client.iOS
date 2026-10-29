@@ -342,9 +342,9 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
 
 
     /// Applies one route epoch on the route queue. A repeated or older epoch does nothing, and so does an epoch while stopped.
-    /// Otherwise the transition window opens, the update socket reconnects once over the new route (while paused it is left
-    /// down, and connects on resume over the current route), the pool main and the media fleet are reset, and the window
-    /// closes once the reconnect is requested.
+    /// Otherwise the request service advances its route epoch, so the calls in flight are classified as route failures, the
+    /// update socket reconnects once over the new route (while paused it is left down, and connects on resume over the
+    /// current route), and the pool main and the media fleet are reset.
     private func applyRouteEpoch(_ epoch: Int) {
         self.lock.lock()
         var repeated: Bool = false
@@ -358,14 +358,13 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             return
         }
         self.lastRouteEpoch = epoch
-        self.requestService.setRouteTransition(true)
+        self.requestService.advanceRouteEpoch()
         if !isPaused {
             self.updateClient.disconnect()
             self.updateClient.connect()
         }
         self.pool.resetMain()
         self.mediaFleet.reset()
-        self.requestService.setRouteTransition(false)
         self.lock.unlock()
     }
 

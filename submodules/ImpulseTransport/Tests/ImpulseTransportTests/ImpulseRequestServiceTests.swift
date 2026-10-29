@@ -311,6 +311,61 @@ private final class RequestServiceCounter: @unchecked Sendable {
 }
 
 
+/// A carrier that advances the route epoch of its service during the send numbered in `advanceOnSends` (sends count
+/// from 1), before it returns the reply. That is a route change that lands while the call is in flight.
+private final class RouteEpochCarrier: ImpulseRequestCarrier, @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private var replies: [Result<[UInt8], ImpulseCarrierFailure>]
+    private let advanceOnSends: Set<Int>
+    private var sends: Int = 0
+    private weak var service: ImpulseRequestService? = nil
+
+
+    init(
+        replies: [Result<[UInt8], ImpulseCarrierFailure>],
+        advanceOnSends: Set<Int>
+    ) {
+        self.replies = replies
+        self.advanceOnSends = advanceOnSends
+    }
+
+
+    func attach(_ service: ImpulseRequestService) {
+        self.lock.lock()
+        self.service = service
+        self.lock.unlock()
+    }
+
+
+    func send(
+        method: String,
+        data: [UInt8],
+        timeoutSeconds: TimeInterval
+    ) async -> Result<[UInt8], ImpulseCarrierFailure> {
+        self.lock.lock()
+        self.sends += 1
+        let sendNumber: Int = self.sends
+        let reply: Result<[UInt8], ImpulseCarrierFailure> = self.replies.isEmpty ? .success([]) : self.replies.removeFirst()
+        let attached: ImpulseRequestService? = self.service
+        self.lock.unlock()
+
+        if self.advanceOnSends.contains(sendNumber) {
+            attached?.advanceRouteEpoch()
+        }
+        return reply
+    }
+
+
+    func sendCount() -> Int {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.sends
+    }
+}
+
+
 private func request(method: String) -> ImpulseEncodedRequest {
     return ImpulseEncodedRequest(
         methodId: 1,
@@ -356,6 +411,27 @@ private func makeService(
         },
         clock: clock
     )
+}
+
+
+private func makeEpochService(
+    carrier: RouteEpochCarrier,
+    clock: RequestServiceClock
+) -> ImpulseRequestService {
+    let unused: RequestServiceCarrier = RequestServiceCarrier(replies: [], delays: [:])
+    let service: ImpulseRequestService = ImpulseRequestService(
+        session: RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed),
+        updateCarrier: carrier,
+        mediaCarrier: carrier,
+        poolCarrier: unused,
+        declarations: nil,
+        signedIn: true,
+        onAuthorizationRequired: {
+        },
+        clock: clock
+    )
+    carrier.attach(service)
+    return service
 }
 
 
@@ -1111,23 +1187,14 @@ final class ImpulseRequestServiceTests: XCTestCase {
     }
 
 
-    /// During a route transition every network failure is a route failure: it is retried at once and spends no budget.
-    /// Eight failures are more than a download allows, so only the reply ends the call, and no wait is taken.
-    func testRouteTransitionFailuresAreRetriedWithoutSpendingTheBudget() async {
-        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
-        var replies: [Result<[UInt8], ImpulseCarrierFailure>] = Array(repeating: networkFailure(), count: 8)
-        replies.append(.success([7]))
-        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: replies, delays: [:])
+    /// A failure of a send that ran under an older route epoch spends no budget. Eight such failures are more than a
+    /// download allows, so only the reply ends the call. Each failure waits the policy delay for the first attempt, one
+    /// second, so no retry runs at zero delay.
+    func testEpochAdvanceFailuresAreRetriedWithoutSpendingTheBudget() async {
+        let replies: [Result<[UInt8], ImpulseCarrierFailure>] = Array(repeating: networkFailure(), count: 8) + [.success([7])]
+        let carrier: RouteEpochCarrier = RouteEpochCarrier(replies: replies, advanceOnSends: Set(1 ... 8))
         let clock: RequestServiceClock = RequestServiceClock()
-        let service: ImpulseRequestService = makeService(
-            session: session,
-            update: carrier,
-            gate: nil,
-            signedIn: true,
-            counter: RequestServiceCounter(),
-            clock: clock
-        )
-        service.setRouteTransition(true)
+        let service: ImpulseRequestService = makeEpochService(carrier: carrier, clock: clock)
 
         let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
             request: request(method: "upload.getFile"),
@@ -1135,13 +1202,33 @@ final class ImpulseRequestServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(result.successValue, [7])
-        XCTAssertEqual(carrier.sentMethods().count, 9)
-        XCTAssertEqual(clock.waitedSeconds(), [])
+        XCTAssertEqual(carrier.sendCount(), 9)
+        XCTAssertEqual(clock.waitedSeconds(), Array(repeating: 1, count: 8))
     }
 
 
-    /// A request cancelled while it waits for a login never sends, and it settles as canceled while a transition is open.
-    func testCancelledRequestSettlesAsCanceledDuringATransition() async throws {
+    /// A retried call takes the current epoch when it runs again. The first send fails under an older epoch and spends
+    /// nothing; the six failures after it are counted, so the download ends with RETRY_LIMIT on the seventh send, with
+    /// the waits of six counted failures from the first attempt.
+    func testRetriedCallTakesTheCurrentEpochWhenItRunsAgain() async {
+        let replies: [Result<[UInt8], ImpulseCarrierFailure>] = Array(repeating: networkFailure(), count: 7)
+        let carrier: RouteEpochCarrier = RouteEpochCarrier(replies: replies, advanceOnSends: [1])
+        let clock: RequestServiceClock = RequestServiceClock()
+        let service: ImpulseRequestService = makeEpochService(carrier: carrier, clock: clock)
+
+        let result: Result<[UInt8], ImpulseRequestFailure> = await service.execute(
+            request: request(method: "upload.getFile"),
+            options: ImpulseRequestOptions()
+        )
+
+        XCTAssertEqual(result.failureValue, .rpc(ImpulseRpcError(code: -123, text: "RETRY_LIMIT", temporary: false)))
+        XCTAssertEqual(carrier.sendCount(), 7)
+        XCTAssertEqual(clock.waitedSeconds(), [1, 1, 2, 3, 4, 5])
+    }
+
+
+    /// A request cancelled while it waits for a login never sends, and it settles as canceled after a route epoch advance.
+    func testCancelledRequestSettlesAsCanceledAfterAnEpochAdvance() async throws {
         let session: RequestServiceSession = RequestServiceSession(loggedIn: false, proactive: false, refreshOutcome: .refreshed)
         let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: [networkFailure(), .success([7])], delays: [:])
         let service: ImpulseRequestService = makeService(
@@ -1151,7 +1238,7 @@ final class ImpulseRequestServiceTests: XCTestCase {
             signedIn: false,
             counter: RequestServiceCounter()
         )
-        service.setRouteTransition(true)
+        service.advanceRouteEpoch()
 
         let call: ImpulseRequestCall = service.submit(
             request: request(method: "messages.sendMessage"),
@@ -1166,32 +1253,32 @@ final class ImpulseRequestServiceTests: XCTestCase {
     }
 
 
-    /// Transition errors map to `routeChanged` only while a transition is open. The lost connection, a closed fleet, a
-    /// disconnected pool client and a media route change are the transition errors.
-    func testTransitionErrorsMapToRouteChangedOnlyDuringATransition() {
-        let network: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
-
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.routeChanged, routeTransition: true), .routeChanged)
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.closed, routeTransition: true), .routeChanged)
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.mainDisconnected, routeTransition: true), .routeChanged)
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: network, routeTransition: true), .routeChanged)
-
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.routeChanged, routeTransition: false), .network(network))
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.closed, routeTransition: false), .network(network))
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.mainDisconnected, routeTransition: false), .network(network))
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: network, routeTransition: false), .network(network))
-    }
-
-
-    /// Errors that are not transition errors keep their carrier failure, in and out of a transition.
-    func testOtherErrorsKeepTheirCarrierFailure() {
+    /// A failure of a call that sent under an older route epoch is `routeChanged`, whatever the error is: the lost
+    /// connection, a closed fleet, a disconnected pool client, a media route change, and any other carrier failure.
+    func testFailureUnderAnEpochAdvanceIsRouteChanged() {
         let network: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
         let server: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 500, appType: "INTERNAL", metadata: [:])
 
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: server, routeTransition: true), .network(server))
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: server, routeTransition: false), .network(server))
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.queueFull, routeTransition: true), .network(network))
-        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.sessionEnded, routeTransition: true), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.routeChanged, epochAdvanced: true), .routeChanged)
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.closed, epochAdvanced: true), .routeChanged)
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.mainDisconnected, epochAdvanced: true), .routeChanged)
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: network, epochAdvanced: true), .routeChanged)
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: server, epochAdvanced: true), .routeChanged)
+    }
+
+
+    /// Without an epoch advance a failure keeps its carrier failure.
+    func testFailureWithoutAnEpochAdvanceKeepsItsCarrierFailure() {
+        let network: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 0, appType: "", metadata: [:])
+        let server: ImpulseCarrierFailure = ImpulseCarrierFailure(sdkCode: 0, appCode: 500, appType: "INTERNAL", metadata: [:])
+
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.routeChanged, epochAdvanced: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.closed, epochAdvanced: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.mainDisconnected, epochAdvanced: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: network, epochAdvanced: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: server, epochAdvanced: false), .network(server))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulseMediaFailure.queueFull, epochAdvanced: false), .network(network))
+        XCTAssertEqual(ImpulseRequestPolicy.failure(for: ImpulsePoolFailure.sessionEnded, epochAdvanced: false), .network(network))
     }
 
 
