@@ -324,10 +324,17 @@ final class ImpulseMediaSocketTransportTests: XCTestCase {
             routeSource: source
         )
 
+        guard let configuration: URLSessionConfigurationProvider = config.urlSessionConfigurationProvider else {
+            XCTFail("The media config with a route must carry the route provider")
+            return
+        }
         guard let provider: CentrifugeProxyCredentialsProvider = config.proxyCredentialsProvider else {
             XCTFail("The media config with a route must carry the credentials provider")
             return
         }
+        XCTAssertNil(provider())
+
+        _ = configuration()
         let credentials: CentrifugeProxyCredentials? = provider()
 
         XCTAssertEqual(credentials?.user, "user")

@@ -132,11 +132,13 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
 
     /// The configuration of the media client: the 1 to 30 second reconnect backoff, the ping delay, the media call
     /// timeout, the session token and the native WebSocket. The native WebSocket is the only one that accepts the route
-    /// and its proxy credentials providers, so every media client uses it, with or without a route.
+    /// and its proxy credentials providers, so every media client uses it, with or without a route. The two providers
+    /// come from one route snapshot, so the credentials are those of the route the session was configured with.
     internal static func makeConfig(
         tokenGetter: @escaping CentrifugeConnectionTokenGetter,
         routeSource: ImpulseProxyRouteSource? = nil
     ) -> CentrifugeClientConfig {
+        let providers: ImpulseRouteProviders = ImpulseSocketPolicy.routeProviders(routeSource: routeSource)
         return CentrifugeClientConfig(
             timeout: ImpulseMediaFleet.callTimeoutSeconds,
             minReconnectDelay: ImpulseMediaSocketTransport.minReconnectDelaySeconds,
@@ -144,9 +146,9 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
             maxServerPingDelay: ImpulseMediaSocketTransport.maxServerPingDelaySeconds,
             name: ImpulsePoolCarrier.clientName,
             useNativeWebSocket: true,
-            urlSessionConfigurationProvider: ImpulseSocketPolicy.urlSessionConfigurationProvider(routeSource: routeSource),
+            urlSessionConfigurationProvider: providers.configuration,
             tokenGetter: tokenGetter,
-            proxyCredentialsProvider: ImpulseSocketPolicy.proxyCredentialsProvider(routeSource: routeSource)
+            proxyCredentialsProvider: providers.credentials
         )
     }
 
