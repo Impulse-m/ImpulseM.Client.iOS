@@ -23,8 +23,18 @@ public final class LiveKitSystemAudioLevelClock: LiveKitAudioLevelClock {
 }
 
 
+/// A meter of one audio track. The track feeds it its buffers, and the levels object reads its level on every sample. Tests use a fake meter.
+public protocol LiveKitAudioLevelMeter: AnyObject, Sendable {
+    /// Receives the buffer of the track. The SDK calls it on the audio thread.
+    func render(pcmBuffer: AVAudioPCMBuffer)
+
+    /// Returns the level of the samples received since the previous call and starts a new window.
+    func takeLevel() -> Float
+}
+
+
 /// Measures the loudness of one audio track from the buffers its renderer receives. The level is the RMS of the samples received since the previous `takeLevel()` call.
-public final class LiveKitGroupAudioMeter: AudioRenderer, @unchecked Sendable {
+public final class LiveKitGroupAudioMeter: AudioRenderer, LiveKitAudioLevelMeter, @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private var sumOfSquares: Double = 0
     private var sampleCount: Int = 0
@@ -89,7 +99,7 @@ public final class LiveKitGroupAudioLevels {
     public static let sampleIntervalMilliseconds: Int64 = 100
 
     private let clock: LiveKitAudioLevelClock
-    private var meters: [LiveKitGroupAudioLevelKey: LiveKitGroupAudioMeter] = [:]
+    private var meters: [LiveKitGroupAudioLevelKey: LiveKitAudioLevelMeter] = [:]
     private var isLocalMuted: Bool = false
     private var lastSampleMilliseconds: Int64?
 
@@ -99,11 +109,17 @@ public final class LiveKitGroupAudioLevels {
     }
 
 
-    /// Creates the meter of one track and returns it. Attach the returned meter as the audio renderer of that track. A key that already has a meter gets a new one.
+    /// Creates the meter of one track and returns it. Attach the returned meter to that track. A key that already has a meter gets a new one.
     public func addMeter(key: LiveKitGroupAudioLevelKey) -> LiveKitGroupAudioMeter {
         let meter: LiveKitGroupAudioMeter = LiveKitGroupAudioMeter()
-        meters[key] = meter
+        addMeter(key: key, meter: meter)
         return meter
+    }
+
+
+    /// Registers the given meter for one track. A key that already has a meter gets the new one.
+    public func addMeter(key: LiveKitGroupAudioLevelKey, meter: LiveKitAudioLevelMeter) {
+        meters[key] = meter
     }
 
 
@@ -128,7 +144,7 @@ public final class LiveKitGroupAudioLevels {
         lastSampleMilliseconds = nowMilliseconds
         var entries: [(LiveKitGroupAudioLevelKey, Float, Bool)] = []
         for key in meters.keys.sorted(by: LiveKitGroupAudioLevels.isOrderedBefore(first:second:)) {
-            guard let meter: LiveKitGroupAudioMeter = meters[key] else {
+            guard let meter: LiveKitAudioLevelMeter = meters[key] else {
                 continue
             }
             let measured: Float = meter.takeLevel()

@@ -426,6 +426,26 @@ private final class LiveKitSDKRoomSession: LiveKitCallRoomSession {
     }
 
 
+    var onAudioTrackAvailable: ((LiveKitAudioTrackHandle) -> Void)? {
+        get {
+            return roomMedia.onAudioTrackAvailable
+        }
+        set {
+            roomMedia.onAudioTrackAvailable = newValue
+        }
+    }
+
+
+    var onAudioTrackRemoved: ((LiveKitAudioTrackHandle) -> Void)? {
+        get {
+            return roomMedia.onAudioTrackRemoved
+        }
+        set {
+            roomMedia.onAudioTrackRemoved = newValue
+        }
+    }
+
+
     func setMicrophoneEnabled(_ isEnabled: Bool) async throws {
         try await roomMedia.setMicrophoneEnabled(isEnabled)
     }

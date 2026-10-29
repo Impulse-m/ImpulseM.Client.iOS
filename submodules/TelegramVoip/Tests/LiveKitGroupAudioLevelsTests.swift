@@ -14,7 +14,40 @@ final class FakeLiveKitAudioLevelClock: LiveKitAudioLevelClock {
 }
 
 
+/// A meter that reports a fixed level, so a test can stand in for the real meter.
+final class FakeLiveKitAudioLevelMeter: LiveKitAudioLevelMeter, @unchecked Sendable {
+    let level: Float
+
+
+    init(level: Float) {
+        self.level = level
+    }
+
+
+    func render(pcmBuffer: AVAudioPCMBuffer) {
+    }
+
+
+    func takeLevel() -> Float {
+        return level
+    }
+}
+
+
 final class LiveKitGroupAudioLevelsTests: XCTestCase {
+    func testFakeMeterStandsInForTheRealMeter() throws {
+        let clock: FakeLiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
+        let levels: LiveKitGroupAudioLevels = LiveKitGroupAudioLevels(clock: clock)
+        levels.addMeter(key: .source(5), meter: FakeLiveKitAudioLevelMeter(level: 0.25))
+
+        let entries: [(LiveKitGroupAudioLevelKey, Float, Bool)] = try XCTUnwrap(levels.sampleIfDue())
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].0, .source(5))
+        XCTAssertEqual(entries[0].1, 0.25, accuracy: 0.0001)
+        XCTAssertTrue(entries[0].2)
+    }
+
+
     func testEachDueSampleReportsOneEntryPerTrackInOrder() throws {
         let clock: FakeLiveKitAudioLevelClock = FakeLiveKitAudioLevelClock()
         let levels: LiveKitGroupAudioLevels = LiveKitGroupAudioLevels(clock: clock)

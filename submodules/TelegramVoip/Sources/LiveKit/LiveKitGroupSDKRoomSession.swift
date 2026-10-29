@@ -3,12 +3,15 @@ import LiveKit
 
 
 /// Adapts the LiveKit room delegate to the group sink. LiveKit calls it on its own threads, so every event hops to the main actor.
+/// The audio track events go to the hub, which registers each track on the calling thread and hops to the main actor itself.
 private final class LiveKitGroupRoomDelegateBridge: NSObject, RoomDelegate, @unchecked Sendable {
     private let sink: LiveKitGroupRoomEventSink
+    private let audioTracks: LiveKitAudioTrackHub
 
 
-    init(sink: LiveKitGroupRoomEventSink) {
+    init(sink: LiveKitGroupRoomEventSink, audioTracks: LiveKitAudioTrackHub) {
         self.sink = sink
+        self.audioTracks = audioTracks
         super.init()
     }
 
@@ -27,6 +30,55 @@ private final class LiveKitGroupRoomDelegateBridge: NSObject, RoomDelegate, @unc
             target.roomDidDisconnectUnexpectedly()
         }
     }
+
+
+    @objc(room:localParticipant:didPublishTrack:)
+    func room(_ room: Room, participant: LocalParticipant, didPublishTrack publication: LocalTrackPublication) {
+        guard publication.kind == .audio, let track: LocalAudioTrack = publication.track as? LocalAudioTrack else {
+            return
+        }
+        let identity: String = participant.identity?.stringValue ?? ""
+        audioTracks.trackDidAppear(key: publication.sid.stringValue) { () -> LiveKitAudioTrackHandle in
+            return LiveKitAudioTrackHandleSDK(participantIdentity: identity, isLocal: true, track: track)
+        }
+    }
+
+
+    @objc(room:localParticipant:didUnpublishTrack:)
+    func room(_ room: Room, participant: LocalParticipant, didUnpublishTrack publication: LocalTrackPublication) {
+        guard publication.kind == .audio else {
+            return
+        }
+        audioTracks.trackDidGoAway(key: publication.sid.stringValue)
+    }
+
+
+    func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
+        guard publication.kind == .audio, let track: RemoteAudioTrack = publication.track as? RemoteAudioTrack else {
+            return
+        }
+        let identity: String = participant.identity?.stringValue ?? ""
+        audioTracks.trackDidAppear(key: publication.sid.stringValue) { () -> LiveKitAudioTrackHandle in
+            return LiveKitAudioTrackHandleSDK(participantIdentity: identity, isLocal: false, track: track)
+        }
+    }
+
+
+    func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
+        guard publication.kind == .audio else {
+            return
+        }
+        audioTracks.trackDidGoAway(key: publication.sid.stringValue)
+    }
+
+
+    @objc(room:remoteParticipant:didUnpublishTrack:)
+    func room(_ room: Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) {
+        guard publication.kind == .audio else {
+            return
+        }
+        audioTracks.trackDidGoAway(key: publication.sid.stringValue)
+    }
 }
 
 
@@ -44,7 +96,8 @@ final class LiveKitGroupSDKRoomSession: LiveKitGroupRoomSession {
 
 
     init(sink: LiveKitGroupRoomEventSink) {
-        let roomBridge: LiveKitGroupRoomDelegateBridge = LiveKitGroupRoomDelegateBridge(sink: sink)
+        let audioTracks: LiveKitAudioTrackHub = LiveKitAudioTrackHub()
+        let roomBridge: LiveKitGroupRoomDelegateBridge = LiveKitGroupRoomDelegateBridge(sink: sink, audioTracks: audioTracks)
         let roomOptions: RoomOptions = RoomOptions()
         let roomInstance: Room = Room(
             delegate: roomBridge,
@@ -55,7 +108,8 @@ final class LiveKitGroupSDKRoomSession: LiveKitGroupRoomSession {
         self.room = roomInstance
         self.roomMedia = LiveKitRoomMediaSDK(
             localParticipant: roomInstance.localParticipant,
-            isGroupCall: true
+            isGroupCall: true,
+            audioTracks: audioTracks
         )
     }
 

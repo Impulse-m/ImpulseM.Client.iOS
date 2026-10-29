@@ -93,6 +93,8 @@ private final class FakeLiveKitRoomSession: LiveKitCallRoomSession, @unchecked S
     private var recordedDisconnects: Int = 0
     private var recordedMediaCalls: [FakeMediaCall] = []
     private var fakeRemoteParticipants: [LiveKitGroupRemoteParticipant] = []
+    var onAudioTrackAvailable: ((LiveKitAudioTrackHandle) -> Void)?
+    var onAudioTrackRemoved: ((LiveKitAudioTrackHandle) -> Void)?
 
 
     init(
