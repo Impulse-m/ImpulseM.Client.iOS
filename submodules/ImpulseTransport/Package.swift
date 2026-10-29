@@ -18,7 +18,7 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/Impulse-m/ImpulseM.Centrifugo.Client.Swift.git",
-            from: "2.0.2"
+            from: "2.1.0"
         ),
     ],
     targets: [
