@@ -99,6 +99,32 @@ private final class UpdateTransportDouble: ImpulseUpdateTransport {
 }
 
 
+private final class UpdateRouteObservationNoop: ImpulseProxyRouteObservation {
+    func cancel() {
+    }
+}
+
+
+private final class UpdateRouteSourceDouble: ImpulseProxyRouteSource, @unchecked Sendable {
+    private let route: ImpulseProxyRoute?
+
+
+    init(route: ImpulseProxyRoute?) {
+        self.route = route
+    }
+
+
+    var currentRoute: ImpulseProxyRoute? {
+        return self.route
+    }
+
+
+    func observe(_ handler: @escaping @Sendable (Int) -> Void) -> ImpulseProxyRouteObservation {
+        return UpdateRouteObservationNoop()
+    }
+}
+
+
 final class ImpulseUpdateSocketCarrierTests: XCTestCase {
     func testSendsTheMethodAndTheBytesAndCapsTheDeadline() async {
         let transport: UpdateTransportDouble = UpdateTransportDouble(immediate: .success(Data([1, 2, 3])))
@@ -225,6 +251,34 @@ final class ImpulseUpdateSocketCarrierTests: XCTestCase {
         XCTAssertEqual(config.minReconnectDelay, ImpulseSocketPolicy.minReconnectDelaySeconds)
         XCTAssertEqual(config.maxReconnectDelay, ImpulseSocketPolicy.maxReconnectDelaySeconds)
         XCTAssertEqual(config.maxServerPingDelay, ImpulseSocketPolicy.maxServerPingDelaySeconds)
+        XCTAssertEqual(config.timeout, ImpulseRequestTimeouts.updateCallSeconds)
+        XCTAssertTrue(config.useNativeWebSocket)
+        XCTAssertTrue(config.token.isEmpty)
+    }
+
+
+    func testDefaultClientConfigWithoutRouteSourceHasNoProvider() {
+        let config: CentrifugeClientConfig = ImpulseUpdateSocketCarrier.defaultClientConfig(routeSource: nil)
+
+        XCTAssertNil(config.urlSessionConfigurationProvider)
+        XCTAssertEqual(config.timeout, ImpulseRequestTimeouts.updateCallSeconds)
+    }
+
+
+    func testDefaultClientConfigWithRouteSourceConnectsThroughItsRoute() {
+        let source: UpdateRouteSourceDouble = UpdateRouteSourceDouble(
+            route: ImpulseProxyRoute(host: "127.0.0.1", port: 9, username: nil, password: nil)
+        )
+        let config: CentrifugeClientConfig = ImpulseUpdateSocketCarrier.defaultClientConfig(routeSource: source)
+
+        guard let provider: URLSessionConfigurationProvider = config.urlSessionConfigurationProvider else {
+            XCTFail("The route config must carry a provider")
+            return
+        }
+        let proxy: [AnyHashable: Any] = provider().connectionProxyDictionary ?? [:]
+
+        XCTAssertEqual(proxy["HTTPPort"] as? Int, 9)
+        XCTAssertEqual(proxy["HTTPSPort"] as? Int, 9)
         XCTAssertEqual(config.timeout, ImpulseRequestTimeouts.updateCallSeconds)
         XCTAssertTrue(config.useNativeWebSocket)
         XCTAssertTrue(config.token.isEmpty)

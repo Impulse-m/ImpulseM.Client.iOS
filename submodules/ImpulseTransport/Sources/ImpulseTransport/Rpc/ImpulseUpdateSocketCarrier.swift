@@ -55,8 +55,9 @@ public final class ImpulseUpdateSocketCarrier: ImpulseRequestCarrier, @unchecked
 
     /// The configuration of an update socket client when none is given: the reconnect backoff, the ping watchdog and the
     /// native WebSocket transport of `ImpulseSocketPolicy`, with the timeout of the update calls. The token is left empty.
-    public static func defaultClientConfig() -> CentrifugeClientConfig {
-        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "")
+    /// A nil `routeSource` gives the direct connection; a source makes each connection use its current route.
+    public static func defaultClientConfig(routeSource: ImpulseProxyRouteSource? = nil) -> CentrifugeClientConfig {
+        var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "", routeSource: routeSource)
         config.timeout = ImpulseRequestTimeouts.updateCallSeconds
         return config
     }
