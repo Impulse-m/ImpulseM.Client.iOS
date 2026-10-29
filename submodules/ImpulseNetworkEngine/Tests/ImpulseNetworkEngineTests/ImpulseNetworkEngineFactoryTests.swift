@@ -33,6 +33,47 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
         XCTAssertFalse(self.makeFactory().supportsWebProxy)
     }
 
+    func testFactoryWithoutRouteSourceGivesNoRouteToTheRoot() throws {
+        let factory: ImpulseNetworkEngineFactory = self.makeFactory()
+        let inputs: ImpulseNetworkCompositionInputs = try factory.makeCompositionInputs(context: impulseMakeContext())
+        XCTAssertNil(inputs.routeSource)
+    }
+
+    func testPublicFactoryDefaultsToNoRouteSource() throws {
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory()
+        let inputs: ImpulseNetworkCompositionInputs = try factory.makeCompositionInputs(context: impulseMakeContext())
+        XCTAssertNil(inputs.routeSource)
+    }
+
+    func testFactoryPassesItsRouteSourceToTheRootInputs() throws {
+        let source: ImpulseFactoryRouteSource = ImpulseFactoryRouteSource(currentRoute: ImpulseProxyRoute(
+            host: "127.0.0.1",
+            port: 1080,
+            username: nil,
+            password: nil
+        ))
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(
+            keychain: ImpulseFactoryKeychain(),
+            keychainAccessGroup: self.testGroup,
+            baseUrl: ImpulseEndpoints.productionBaseUrl,
+            proxyRouteSource: source
+        )
+        let inputs: ImpulseNetworkCompositionInputs = try factory.makeCompositionInputs(context: impulseMakeContext())
+        XCTAssertTrue(inputs.routeSource === source)
+    }
+
+    func testFactoryWithRouteSourceStillNeverReturnsNil() {
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(
+            keychain: ImpulseFactoryKeychain(),
+            keychainAccessGroup: self.testGroup,
+            baseUrl: ImpulseEndpoints.productionBaseUrl,
+            proxyRouteSource: ImpulseFactoryRouteSource(currentRoute: nil)
+        )
+        let engine: NetworkEngine? = factory.makeEngine(context: impulseMakeContext(), isAppExtension: false)
+        XCTAssertNotNil(engine)
+        XCTAssertEqual(engine?.kind, .impulse)
+    }
+
     func testActivateStartsTheLifecycleAndDeactivateStopsIt() {
         let lifecycle: ImpulseFactoryLifecycle = ImpulseFactoryLifecycle()
         let engine: ImpulseNetworkEngine = ImpulseNetworkEngine(
@@ -124,7 +165,8 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
             identityClock: ImpulseFactoryClock(),
             identityScheduler: ImpulseFactoryScheduler(),
             declaration: ImpulseNetworkEngineFactory.makeDeclaration(),
-            updateBridge: ImpulseUpdateBridge(context: impulseMakeContext())
+            updateBridge: ImpulseUpdateBridge(context: impulseMakeContext()),
+            routeSource: nil
         )
         return try ImpulseNetworkCompositionRoot(inputs: inputs)
     }
@@ -213,6 +255,28 @@ final class ImpulseFactoryLifecycle: ImpulseNetworkLifecycle {
 
     func stop() {
         self.events.append("stop")
+    }
+}
+
+
+/// A route source with a fixed route. It never delivers an epoch, since the composition inputs only carry it.
+final class ImpulseFactoryRouteSource: ImpulseProxyRouteSource {
+    let currentRoute: ImpulseProxyRoute?
+
+
+    init(currentRoute: ImpulseProxyRoute?) {
+        self.currentRoute = currentRoute
+    }
+
+
+    func observe(_ handler: @escaping @Sendable (Int) -> Void) -> ImpulseProxyRouteObservation {
+        return ImpulseFactoryRouteObservation()
+    }
+}
+
+
+final class ImpulseFactoryRouteObservation: ImpulseProxyRouteObservation {
+    func cancel() {
     }
 }
 

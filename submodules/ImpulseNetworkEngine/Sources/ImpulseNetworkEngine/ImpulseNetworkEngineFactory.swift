@@ -13,23 +13,28 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
     private let keychain: any ImpulseKeychain
     private let keychainAccessGroup: String?
     private let baseUrl: String
+    private let routeSource: ImpulseProxyRouteSource?
 
 
-    public init() {
+    /// The engine connects directly unless a route source is given; the transport reads the route for each new connection.
+    public init(proxyRouteSource: ImpulseProxyRouteSource? = nil) {
         self.keychain = ImpulseSystemKeychain()
         self.keychainAccessGroup = nil
         self.baseUrl = ImpulseEndpoints.productionBaseUrl
+        self.routeSource = proxyRouteSource
     }
 
 
     init(
         keychain: any ImpulseKeychain,
         keychainAccessGroup: String?,
-        baseUrl: String
+        baseUrl: String,
+        proxyRouteSource: ImpulseProxyRouteSource? = nil
     ) {
         self.keychain = keychain
         self.keychainAccessGroup = keychainAccessGroup
         self.baseUrl = baseUrl
+        self.routeSource = proxyRouteSource
     }
 
 
@@ -46,16 +51,7 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
 
         let root: ImpulseNetworkCompositionRoot
         do {
-            let inputs: ImpulseNetworkCompositionInputs = ImpulseNetworkCompositionInputs(
-                endpoints: try ImpulseEndpoints(baseUrl: self.baseUrl),
-                mapping: try ImpulseMapping.loadBundled(),
-                keychain: self.keychain,
-                keychainAccessGroup: self.resolvedAccessGroup(),
-                identityClock: ImpulseSystemClock(),
-                identityScheduler: ImpulseTaskScheduler(),
-                declaration: ImpulseNetworkEngineFactory.makeDeclaration(),
-                updateBridge: ImpulseUpdateBridge(context: context)
-            )
+            let inputs: ImpulseNetworkCompositionInputs = try self.makeCompositionInputs(context: context)
             root = try ImpulseNetworkCompositionRoot(inputs: inputs)
         } catch {
             preconditionFailure("The ImpulseM network cannot be composed: \(error)")
@@ -67,6 +63,23 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
                 return root.makeSession(datacenterId: datacenterId, role: role, delegate: delegate)
             },
             lifecycle: root
+        )
+    }
+
+
+    /// The inputs of the composition root for one context: the endpoints, the bundled mapping, the keychain, the declaration,
+    /// the update bridge of the context, and the route source the transport reads for each new connection.
+    func makeCompositionInputs(context: MTContext) throws -> ImpulseNetworkCompositionInputs {
+        return ImpulseNetworkCompositionInputs(
+            endpoints: try ImpulseEndpoints(baseUrl: self.baseUrl),
+            mapping: try ImpulseMapping.loadBundled(),
+            keychain: self.keychain,
+            keychainAccessGroup: self.resolvedAccessGroup(),
+            identityClock: ImpulseSystemClock(),
+            identityScheduler: ImpulseTaskScheduler(),
+            declaration: ImpulseNetworkEngineFactory.makeDeclaration(),
+            updateBridge: ImpulseUpdateBridge(context: context),
+            routeSource: self.routeSource
         )
     }
 

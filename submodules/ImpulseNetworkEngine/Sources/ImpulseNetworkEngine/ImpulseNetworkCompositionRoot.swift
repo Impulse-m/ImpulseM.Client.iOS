@@ -15,6 +15,7 @@ struct ImpulseNetworkCompositionInputs {
     let identityScheduler: any ImpulseIdentityScheduler
     let declaration: ImpulseDeclaration
     let updateBridge: ImpulseUpdateBridge
+    let routeSource: ImpulseProxyRouteSource?
 }
 
 
