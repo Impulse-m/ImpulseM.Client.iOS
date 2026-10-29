@@ -19,6 +19,125 @@ struct ImpulseNetworkCompositionInputs {
 }
 
 
+/// The update socket as a route epoch uses it: the reconnect over the new route, and the disconnect while the root stops.
+protocol ImpulseRouteUpdateSocket: AnyObject {
+    func connect()
+
+    func disconnect()
+}
+
+
+/// The pool as a route epoch uses it: its start and stop, and the reset of its main client after a route change.
+protocol ImpulseRoutePool: AnyObject {
+    func start()
+
+    func stop()
+
+    func resetMain()
+}
+
+
+/// The media fleet as a route epoch uses it: the reset that retires the carrier and fails the waiting calls.
+protocol ImpulseRouteMediaFleet: AnyObject {
+    func reset()
+}
+
+
+/// The request service as a route epoch uses it: the advance of the route epoch that classifies the calls in flight.
+protocol ImpulseRouteEpochSink: AnyObject {
+    func advanceRouteEpoch()
+}
+
+
+/// The parts that a route epoch touches, as seams. A nil seam is the real part, reached through an adapter. The tests
+/// pass fakes for the seams, so that no socket connects and no server is reached.
+struct ImpulseNetworkRouteSeams {
+    let updateSocket: (any ImpulseRouteUpdateSocket)?
+    let pool: (any ImpulseRoutePool)?
+    let mediaFleet: (any ImpulseRouteMediaFleet)?
+    let epochSink: (any ImpulseRouteEpochSink)?
+}
+
+
+/// The update client of the root as a route epoch uses it.
+private final class ImpulseRootUpdateSocketAdapter: ImpulseRouteUpdateSocket {
+    private let client: CentrifugeClient
+
+
+    init(client: CentrifugeClient) {
+        self.client = client
+    }
+
+
+    func connect() {
+        self.client.connect()
+    }
+
+
+    func disconnect() {
+        self.client.disconnect()
+    }
+}
+
+
+/// The pool carrier of the root as a route epoch uses it.
+private final class ImpulseRootPoolAdapter: ImpulseRoutePool {
+    private let pool: ImpulsePoolCarrier
+
+
+    init(pool: ImpulsePoolCarrier) {
+        self.pool = pool
+    }
+
+
+    func start() {
+        self.pool.start()
+    }
+
+
+    func stop() {
+        self.pool.stop()
+    }
+
+
+    func resetMain() {
+        self.pool.resetMain()
+    }
+}
+
+
+/// The media fleet of the root as a route epoch uses it.
+private final class ImpulseRootMediaFleetAdapter: ImpulseRouteMediaFleet {
+    private let fleet: ImpulseMediaFleet
+
+
+    init(fleet: ImpulseMediaFleet) {
+        self.fleet = fleet
+    }
+
+
+    func reset() {
+        self.fleet.reset()
+    }
+}
+
+
+/// The request service of the root as a route epoch uses it.
+private final class ImpulseRootEpochAdapter: ImpulseRouteEpochSink {
+    private let service: ImpulseRequestService
+
+
+    init(service: ImpulseRequestService) {
+        self.service = service
+    }
+
+
+    func advanceRouteEpoch() {
+        self.service.advanceRouteEpoch()
+    }
+}
+
+
 /// The composition root of one account's ImpulseM transport. It builds the parts of `ImpulseTransport` that the sessions
 /// share (the endpoints, the codec, the session tokens and the connection identity, the update socket and the pool clients
 /// with their carriers, the media fleet, the connection declaration, the request service, the realtime client and the
@@ -46,19 +165,35 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
     let realtime: ImpulseRealtime
     let forwarder: ImpulseRealtimeForwarder
 
+    /// The queue the route epochs run on, in order. A test flushes it by running an empty block on it.
+    let routeQueue: DispatchQueue = DispatchQueue(label: "org.impulsem.network-engine.route-epochs")
+
     private let identityCarrier: ImpulsePoolIdentityCarrier
     private let declaration: ImpulseDeclaration
     private let updateBridge: ImpulseUpdateBridge
     private let routeSource: ImpulseProxyRouteSource?
-    private let routeQueue: DispatchQueue = DispatchQueue(label: "org.impulsem.network-engine.route-epochs")
+    private let routeUpdateSocket: any ImpulseRouteUpdateSocket
+    private let routePool: any ImpulseRoutePool
+    private let routeMediaFleet: any ImpulseRouteMediaFleet
+    private let routeEpochSink: any ImpulseRouteEpochSink
     private let lock: NSLock = NSLock()
     private var started: Bool = false
     private var paused: Bool = false
+    private var observingRoutes: Bool = false
     private var routeObservation: ImpulseProxyRouteObservation? = nil
     private var lastRouteEpoch: Int? = nil
 
 
-    init(inputs: ImpulseNetworkCompositionInputs) throws {
+    convenience init(inputs: ImpulseNetworkCompositionInputs) throws {
+        try self.init(inputs: inputs, seams: nil)
+    }
+
+
+    /// Builds the root. A nil `seams` builds the real parts that a route epoch touches; the tests pass fakes for them.
+    init(
+        inputs: ImpulseNetworkCompositionInputs,
+        seams: ImpulseNetworkRouteSeams?
+    ) throws {
         let link: ImpulseAccountLink = ImpulseAccountLink()
         let forwarder: ImpulseRealtimeForwarder = ImpulseRealtimeForwarder()
         let transcoder: ImpulseTranscoder = ImpulseTranscoder(mapping: inputs.mapping)
@@ -142,6 +277,11 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
 
         link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials))
 
+        let routeUpdateSocket: any ImpulseRouteUpdateSocket = seams?.updateSocket ?? ImpulseRootUpdateSocketAdapter(client: updateClient)
+        let routePool: any ImpulseRoutePool = seams?.pool ?? ImpulseRootPoolAdapter(pool: pool)
+        let routeMediaFleet: any ImpulseRouteMediaFleet = seams?.mediaFleet ?? ImpulseRootMediaFleetAdapter(fleet: mediaFleet)
+        let routeEpochSink: any ImpulseRouteEpochSink = seams?.epochSink ?? ImpulseRootEpochAdapter(service: requestService)
+
         self.transcoder = transcoder
         self.sessionStore = store
         self.credentials = credentials
@@ -163,6 +303,10 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         self.declaration = inputs.declaration
         self.updateBridge = inputs.updateBridge
         self.routeSource = inputs.routeSource
+        self.routeUpdateSocket = routeUpdateSocket
+        self.routePool = routePool
+        self.routeMediaFleet = routeMediaFleet
+        self.routeEpochSink = routeEpochSink
     }
 
 
@@ -238,21 +382,13 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         self.lock.lock()
         let alreadyStarted: Bool = self.started
         self.started = true
-        if !alreadyStarted {
-            self.routeObservation = self.routeSource?.observe({ [weak self] (epoch: Int) -> Void in
-                if let root: ImpulseNetworkCompositionRoot = self {
-                    root.routeQueue.async {
-                        root.applyRouteEpoch(epoch)
-                    }
-                }
-            })
-        }
         self.lock.unlock()
         if alreadyStarted {
             return
         }
 
-        self.pool.start()
+        self.startRouteObservation()
+        self.routePool.start()
 
         let identity: ImpulseIdentityManager = self.identity
         let identityCarrier: ImpulsePoolIdentityCarrier = self.identityCarrier
@@ -269,17 +405,39 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
     }
 
 
+    /// Follows the route epochs of the route source, so that each epoch reaches `applyRouteEpoch` on the route queue. The
+    /// start calls it; a call while the route is already observed changes nothing.
+    func startRouteObservation() {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        if self.observingRoutes {
+            return
+        }
+        self.observingRoutes = true
+        self.routeObservation = self.routeSource?.observe({ [weak self] (epoch: Int) -> Void in
+            if let root: ImpulseNetworkCompositionRoot = self {
+                root.routeQueue.async {
+                    root.applyRouteEpoch(epoch)
+                }
+            }
+        })
+    }
+
+
     /// Stops the connections. The route observation is cancelled, the pool stops restarting its main client, and the update socket disconnects.
     func stop() {
         self.lock.lock()
         self.started = false
+        self.observingRoutes = false
         let observation: ImpulseProxyRouteObservation? = self.routeObservation
         self.routeObservation = nil
         self.lock.unlock()
 
         observation?.cancel()
-        self.pool.stop()
-        self.updateClient.disconnect()
+        self.routePool.stop()
+        self.routeUpdateSocket.disconnect()
     }
 
 
@@ -291,9 +449,9 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         self.lock.unlock()
 
         if paused {
-            self.updateClient.disconnect()
+            self.routeUpdateSocket.disconnect()
         } else {
-            self.updateClient.connect()
+            self.routeUpdateSocket.connect()
         }
     }
 
@@ -341,30 +499,30 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
     }
 
 
-    /// Applies one route epoch on the route queue. A repeated or older epoch does nothing, and so does an epoch while stopped.
-    /// Otherwise the request service advances its route epoch, so the calls in flight are classified as route failures, the
-    /// update socket reconnects once over the new route (while paused it is left down, and connects on resume over the
-    /// current route), and the pool main and the media fleet are reset.
+    /// Applies one route epoch on the route queue. A repeated or older epoch does nothing, and so does an epoch while the route
+    /// is not observed (before the observation starts, or after `stop`). Otherwise the request service advances its route epoch,
+    /// so the calls in flight are classified as route failures, the update socket reconnects once over the new route (while
+    /// paused it is left down, and connects on resume over the current route), and the pool main and the media fleet are reset.
     private func applyRouteEpoch(_ epoch: Int) {
         self.lock.lock()
         var repeated: Bool = false
         if let last: Int = self.lastRouteEpoch {
             repeated = epoch <= last
         }
-        let running: Bool = self.started
+        let observing: Bool = self.observingRoutes
         let isPaused: Bool = self.paused
-        if repeated || !running {
+        if repeated || !observing {
             self.lock.unlock()
             return
         }
         self.lastRouteEpoch = epoch
-        self.requestService.advanceRouteEpoch()
+        self.routeEpochSink.advanceRouteEpoch()
         if !isPaused {
-            self.updateClient.disconnect()
-            self.updateClient.connect()
+            self.routeUpdateSocket.disconnect()
+            self.routeUpdateSocket.connect()
         }
-        self.pool.resetMain()
-        self.mediaFleet.reset()
+        self.routePool.resetMain()
+        self.routeMediaFleet.reset()
         self.lock.unlock()
     }
 
