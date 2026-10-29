@@ -800,8 +800,8 @@ public extension TelegramEngine {
             return _internal_togglePeerMessagesTranslationHidden(account: self.account, peerId: peerId, hidden: hidden)
         }
         
-        public func summarizeMessage(messageId: EngineMessage.Id, translateToLang: String?) -> Signal<Never, SummarizeError> {
-            return _internal_summarizeMessage(account: self.account, messageId: messageId, translateToLang: translateToLang)
+        public func summarizeMessage(messageId: EngineMessage.Id, translateToLang: String?, tone: TranslationTone = .neutral) -> Signal<Never, SummarizeError> {
+            return _internal_summarizeMessage(account: self.account, messageId: messageId, translateToLang: translateToLang, tone: tone)
         }
         
         public func transcribeAudio(messageId: MessageId) -> Signal<EngineAudioTranscriptionResult, NoError> {

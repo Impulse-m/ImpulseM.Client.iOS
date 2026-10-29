@@ -12,7 +12,7 @@ public enum SummarizeError {
     case limitExceededPremium
 }
 
-func _internal_summarizeMessage(account: Account, messageId: EngineMessage.Id, translateToLang: String?) -> Signal<Never, SummarizeError> {
+func _internal_summarizeMessage(account: Account, messageId: EngineMessage.Id, translateToLang: String?, tone: TranslationTone = .neutral) -> Signal<Never, SummarizeError> {
     return account.postbox.transaction { transaction -> Api.InputPeer? in
         return transaction.getPeer(messageId.peerId).flatMap(apiInputPeer)
     }
@@ -26,8 +26,14 @@ func _internal_summarizeMessage(account: Account, messageId: EngineMessage.Id, t
         if let _ = translateToLang {
             flags |= (1 << 0)
         }
-        
-        return account.network.request(Api.functions.messages.summarizeText(flags: flags, peer: inputPeer, id: messageId.id, toLang: translateToLang, tone: nil))
+
+        var apiTone: String?
+        if tone != .neutral {
+            flags |= (1 << 2)
+            apiTone = tone.rawValue
+        }
+
+        return account.network.request(Api.functions.messages.summarizeText(flags: flags, peer: inputPeer, id: messageId.id, toLang: translateToLang, tone: apiTone))
         |> map(Optional.init)
         |> mapError { error -> SummarizeError in
             if error.errorDescription.hasPrefix("FLOOD_WAIT") {
