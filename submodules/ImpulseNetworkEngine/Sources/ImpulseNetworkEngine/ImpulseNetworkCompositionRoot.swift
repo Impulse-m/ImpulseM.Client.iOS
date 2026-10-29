@@ -16,6 +16,7 @@ struct ImpulseNetworkCompositionInputs {
     let declaration: ImpulseDeclaration
     let updateBridge: ImpulseUpdateBridge
     let routeSource: ImpulseProxyRouteSource?
+    var clientName: String = ImpulsePoolCarrier.clientName
 }
 
 
@@ -209,7 +210,11 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
             identityRenewal: { (completion: @escaping (Result<Void, Error>) -> Void) -> Void in
                 link.renewIdentity(completion: completion)
             },
-            mainConfig: ImpulseNetworkCompositionRoot.makePoolConfig(routeSource: inputs.routeSource)
+            mainConfig: ImpulseNetworkCompositionRoot.makePoolConfig(
+                routeSource: inputs.routeSource,
+                clientName: inputs.clientName
+            ),
+            clientName: inputs.clientName
         )
         let poolRequestCarrier: ImpulsePoolRequestCarrier = ImpulsePoolRequestCarrier(pool: pool)
         let identityCarrier: ImpulsePoolIdentityCarrier = ImpulsePoolIdentityCarrier(carrier: poolRequestCarrier)
@@ -232,11 +237,13 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
         let updateCarrier: ImpulseUpdateSocketCarrier = ImpulseUpdateSocketCarrier(client: updateClient)
 
         let mediaRouteSource: ImpulseProxyRouteSource? = inputs.routeSource
+        let mediaClientName: String = inputs.clientName
         let mediaFleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
             return ImpulseNetworkCompositionRoot.makeMediaTransport(
                 endpoint: endpoint,
                 tokenGetter: ImpulseNetworkCompositionRoot.mediaTokenGetter(link: link),
-                routeSource: mediaRouteSource
+                routeSource: mediaRouteSource,
+                clientName: mediaClientName
             )
         })
         let mediaCarrier: ImpulseMediaRequestCarrier = ImpulseMediaRequestCarrier(fleet: mediaFleet)
@@ -325,10 +332,13 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
 
 
     /// The socket policy of the pool's main client: the same backoff and watchdog, the pool's client name and call timeout, and no token.
-    /// The main client connects through the route of `routeSource`, or directly when it is nil.
-    static func makePoolConfig(routeSource: ImpulseProxyRouteSource? = nil) -> CentrifugeClientConfig {
+    /// The main client connects through the route of `routeSource`, or directly when it is nil. The main client reports `clientName`.
+    static func makePoolConfig(
+        routeSource: ImpulseProxyRouteSource? = nil,
+        clientName: String = ImpulsePoolCarrier.clientName
+    ) -> CentrifugeClientConfig {
         var config: CentrifugeClientConfig = ImpulseSocketPolicy.clientConfig(token: "", routeSource: routeSource)
-        config.name = ImpulsePoolCarrier.clientName
+        config.name = clientName
         config.timeout = ImpulsePoolCarrier.callTimeoutSeconds
         return config
     }
@@ -339,12 +349,14 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
     static func makeMediaTransport(
         endpoint: String,
         tokenGetter: @escaping CentrifugeConnectionTokenGetter,
-        routeSource: ImpulseProxyRouteSource?
+        routeSource: ImpulseProxyRouteSource?,
+        clientName: String = ImpulsePoolCarrier.clientName
     ) -> ImpulseMediaTransport {
         return ImpulseMediaSocketTransport(
             endpoint: endpoint,
             tokenGetter: tokenGetter,
-            routeSource: routeSource
+            routeSource: routeSource,
+            clientName: clientName
         )
     }
 

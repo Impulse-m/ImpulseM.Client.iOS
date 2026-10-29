@@ -64,17 +64,20 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
 
 
     /// Creates the transport of `endpoint` with a new SDK client that takes its connection token from `tokenGetter`.
-    /// The client's native WebSocket connects through the route of `routeSource`, or directly when it is nil.
+    /// The client's native WebSocket connects through the route of `routeSource`, or directly when it is nil. The client
+    /// reports `clientName` to the server.
     public convenience init(
         endpoint: String,
         tokenGetter: @escaping CentrifugeConnectionTokenGetter,
-        routeSource: ImpulseProxyRouteSource? = nil
+        routeSource: ImpulseProxyRouteSource? = nil,
+        clientName: String = ImpulsePoolCarrier.clientName
     ) {
         let client: CentrifugeClient = CentrifugeClient(
             endpoint: endpoint,
             config: ImpulseMediaSocketTransport.makeConfig(
                 tokenGetter: tokenGetter,
-                routeSource: routeSource
+                routeSource: routeSource,
+                clientName: clientName
             )
         )
         self.init(client: client)
@@ -136,7 +139,8 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
     /// come from one route snapshot, so the credentials are those of the route the session was configured with.
     internal static func makeConfig(
         tokenGetter: @escaping CentrifugeConnectionTokenGetter,
-        routeSource: ImpulseProxyRouteSource? = nil
+        routeSource: ImpulseProxyRouteSource? = nil,
+        clientName: String = ImpulsePoolCarrier.clientName
     ) -> CentrifugeClientConfig {
         let providers: ImpulseRouteProviders = ImpulseSocketPolicy.routeProviders(routeSource: routeSource)
         return CentrifugeClientConfig(
@@ -144,7 +148,7 @@ public final class ImpulseMediaSocketTransport: ImpulseMediaTransport, @unchecke
             minReconnectDelay: ImpulseMediaSocketTransport.minReconnectDelaySeconds,
             maxReconnectDelay: ImpulseMediaSocketTransport.maxReconnectDelaySeconds,
             maxServerPingDelay: ImpulseMediaSocketTransport.maxServerPingDelaySeconds,
-            name: ImpulsePoolCarrier.clientName,
+            name: clientName,
             useNativeWebSocket: true,
             urlSessionConfigurationProvider: providers.configuration,
             tokenGetter: tokenGetter,
