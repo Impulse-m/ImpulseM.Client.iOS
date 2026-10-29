@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "TelegramVoip",
-    platforms: [.macOS(.v12)],
+    platforms: [.macOS(.v12), .iOS(.v13)],
     products: [
         // Products define the executables and libraries a package produces, and make them visible to other packages.
         .library(
@@ -18,7 +18,8 @@ let package = Package(
         .package(name: "TgVoipWebrtc", path: "../../../tgcalls"),
         .package(name: "SSignalKit", path: "../SSignalKit"),
         .package(name: "FFMpegBinding", path: "../FFMpegBinding"),
-        .package(name: "TelegramCore", path: "../TelegramCore")
+        .package(name: "TelegramCore", path: "../TelegramCore"),
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", exact: "2.19.0"),
 
     ],
     targets: [
@@ -27,10 +28,11 @@ let package = Package(
         .target(
             name: "TelegramVoip",
             dependencies: [
-                .product(name: "TgVoipWebrtc", package: "TgVoipWebrtc", condition: nil),
+                .product(name: "TgVoipWebrtc", package: "TgVoipWebrtc", condition: .when(platforms: [.iOS])),
                 .product(name: "SwiftSignalKit", package: "SSignalKit", condition: nil),
                 .product(name: "FFMpegBinding", package: "FFMpegBinding", condition: nil),
                 .product(name: "TelegramCore", package: "TelegramCore", condition: nil),
+                .product(name: "LiveKit", package: "client-sdk-swift", condition: nil),
             ],
             path: "Sources",
             exclude: [
@@ -40,5 +42,10 @@ let package = Package(
             cxxSettings: [
                 .define("WEBRTC_MAC", to: "1", nil),
             ]),
+        .testTarget(
+            name: "TelegramVoipTests",
+            dependencies: ["TelegramVoip"],
+            path: "Tests"
+        ),
     ]
 )
