@@ -14,6 +14,7 @@ import TelegramNotices
 import AlertComponent
 import WalletContext
 import WalletSendScreen
+import ImpulseFeatures
 
 extension PeerInfoScreenNode {
     func performButtonAction(key: PeerInfoHeaderButtonKey, buttonNode: PeerInfoHeaderButtonNode?, gesture: ContextGesture?) {
@@ -551,7 +552,7 @@ extension PeerInfoScreenNode {
                         }
                     }
                     
-                    if strongSelf.peerId.namespace == Namespaces.Peer.CloudUser && user.botInfo == nil && !user.flags.contains(.isSupport) {
+                    if ImpulseFeatures.SECRET_CHATS && strongSelf.peerId.namespace == Namespaces.Peer.CloudUser && user.botInfo == nil && !user.flags.contains(.isSupport) {
                         if let cachedUserData = strongSelf.data?.cachedData as? CachedUserData, let _ = cachedUserData.sendPaidMessageStars {
                             
                         } else {

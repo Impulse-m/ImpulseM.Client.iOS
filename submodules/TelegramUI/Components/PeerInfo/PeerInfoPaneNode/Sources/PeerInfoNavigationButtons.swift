@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import Display
+import ImpulseFeatures
 
 /// The profile's navigation buttons (spec 2026-10-16-peer-info-navigation-bar-design.md). `.back` is the bar's own
 /// now; `.select`, `.editPhoto` and `.editVideo` are produced by no set.
@@ -95,7 +96,7 @@ public func peerInfoNavigationButtonSets(_ flags: PeerInfoNavigationFlags) -> (n
     } else if flags.isMyProfile || flags.canEdit {
         normal.right.append(.edit)
     }
-    if flags.channelCanPostStories || flags.isMyProfile {
+    if ImpulseFeatures.STORIES_POSTING && (flags.channelCanPostStories || flags.isMyProfile) {
         normal.right.insert(.postStory, at: 0)
     }
     if flags.isSelectingOrReordering {

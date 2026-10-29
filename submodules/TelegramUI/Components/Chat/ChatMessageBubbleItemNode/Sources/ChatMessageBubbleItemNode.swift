@@ -10,6 +10,7 @@ import TelegramPresentationData
 import TelegramUIPreferences
 import TextFormat
 import AccountContext
+import ImpulseFeatures
 import TemporaryCachedPeerDataManager
 import LocalizedPeerData
 import ContextUI
@@ -1928,7 +1929,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 needsShareButton = true
             }
             
-            if let _ = item.message.attributes.first(where: { $0 is SummarizationMessageAttribute }) {
+            if ImpulseFeatures.AI_COMPOSE, let _ = item.message.attributes.first(where: { $0 is SummarizationMessageAttribute }) {
                 needsSummarizeButton = true
             }
             
