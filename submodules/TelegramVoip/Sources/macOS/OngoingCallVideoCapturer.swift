@@ -64,6 +64,7 @@ public final class OngoingCallVideoCapturer {
     private var onFatalError: (() -> Void)?
     private var onPause: ((Bool) -> Void)?
     private var trackTask: Task<LocalVideoTrack?, Never>?
+    private let switchSequence: VideoInputSwitchSequence = VideoInputSwitchSequence()
 
 
     /// A camera capturer. An empty identifier selects the default camera. The camera track is created on first use.
@@ -176,20 +177,29 @@ public final class OngoingCallVideoCapturer {
 
 
     /// Switches the camera. The device identifier selects the camera; an empty identifier selects the default one.
+    ///
+    /// If the camera track is still being created, the switch waits for it and then applies the device of the latest call. A switch superseded by a newer one does nothing.
     public func switchVideoInput(_ deviceId: String) {
         self.deviceId = deviceId
         guard self.captureCode != .screen else {
             return
         }
-        guard let track: LocalVideoTrack = self.track else {
+        let ticket: UInt64 = self.switchSequence.advance()
+        guard self.track != nil || self.trackTask != nil else {
             return
         }
-        guard let cameraCapturer: CameraCapturer = track.capturer as? CameraCapturer else {
-            return
-        }
-        let device: AVCaptureDevice? = deviceId.isEmpty ? nil : AVCaptureDevice(uniqueID: deviceId)
-        let options: CameraCaptureOptions = CameraCaptureOptions(device: device, position: .front)
-        Task {
+        Task { @MainActor in
+            guard let track: LocalVideoTrack = await self.ensureTrack() else {
+                return
+            }
+            guard self.switchSequence.isCurrent(ticket) else {
+                return
+            }
+            guard let cameraCapturer: CameraCapturer = track.capturer as? CameraCapturer else {
+                return
+            }
+            let device: AVCaptureDevice? = self.deviceId.isEmpty ? nil : AVCaptureDevice(uniqueID: self.deviceId)
+            let options: CameraCaptureOptions = CameraCaptureOptions(device: device, position: .front)
             _ = try? await cameraCapturer.set(options: options)
         }
     }
@@ -214,6 +224,35 @@ public final class OngoingCallVideoCapturer {
             return nil
         }
         return await pending.value
+    }
+}
+
+
+
+/// Hands out an ascending ticket to each camera switch. Only the newest ticket is current, so a superseded switch does nothing.
+final class VideoInputSwitchSequence {
+    private let lock: NSLock = NSLock()
+    private var latest: UInt64 = 0
+
+
+    /// Starts a new switch and returns its ticket.
+    func advance() -> UInt64 {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        self.latest += 1
+        return self.latest
+    }
+
+
+    /// True while no newer switch has started after the given ticket.
+    func isCurrent(_ ticket: UInt64) -> Bool {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.latest == ticket
     }
 }
 
