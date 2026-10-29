@@ -38,10 +38,22 @@ public enum LiveKitCallState: Equatable {
 }
 
 
+/// The media of a call room: the local operations of `LiveKitRoomMedia` and the remote participants whose tracks the call renders.
+public protocol LiveKitCallMedia: LiveKitRoomMedia {
+    /// The remote participants of the call room. Their video publications carry the remote video of the call.
+    var remoteParticipants: [LiveKitGroupRemoteParticipant] { get }
+}
+
+
 /// The room operations the call context drives. The production implementation wraps the LiveKit `Room`.
 protocol LiveKitRoomSession: AnyObject {
     func connect(url: String, token: String) async throws
     func disconnect() async
+}
+
+
+/// The room session of a 1:1 call: the room operations plus the media of the call room.
+protocol LiveKitCallRoomSession: LiveKitRoomSession, LiveKitCallMedia {
 }
 
 
@@ -55,7 +67,7 @@ protocol LiveKitRoomEventSink: AnyObject {
 
 
 /// Creates the room session of a call from the shared call key provider and the sink that receives its events.
-typealias LiveKitRoomSessionFactory = (BaseKeyProvider, LiveKitRoomEventSink) -> LiveKitRoomSession
+typealias LiveKitRoomSessionFactory = (BaseKeyProvider, LiveKitRoomEventSink) -> LiveKitCallRoomSession
 
 
 /// The encryption state of a media track as the call context sees it.
@@ -97,12 +109,17 @@ public final class LiveKitCallContext: LiveKitRoomEventSink {
     public private(set) var state: LiveKitCallState = .connecting
     public var onStateChanged: ((LiveKitCallState) -> Void)?
 
+    /// The media of the call room: mute, noise, camera, devices and remote participants. Nil before `start()` and once the call is ending.
+    public var media: LiveKitCallMedia? {
+        return session
+    }
+
     private let parameters: LiveKitJoinParameters
     private let keyProvider: BaseKeyProvider
     private let joinDeadline: TimeInterval
     private let leaveDeadline: TimeInterval
     private let makeSession: LiveKitRoomSessionFactory
-    private var session: LiveKitRoomSession?
+    private var session: LiveKitCallRoomSession?
     private var hasStarted: Bool = false
     private var isTerminating: Bool = false
     private var connectTask: Task<Void, Never>?
@@ -159,7 +176,7 @@ public final class LiveKitCallContext: LiveKitRoomEventSink {
             return
         }
         hasStarted = true
-        let roomSession: LiveKitRoomSession = makeSession(keyProvider, self)
+        let roomSession: LiveKitCallRoomSession = makeSession(keyProvider, self)
         session = roomSession
         scheduleJoinDeadline()
         let url: String = parameters.url
@@ -223,7 +240,7 @@ public final class LiveKitCallContext: LiveKitRoomEventSink {
     nonisolated static func makeSDKSession(
         _ keyProvider: BaseKeyProvider,
         _ sink: LiveKitRoomEventSink
-    ) -> LiveKitRoomSession {
+    ) -> LiveKitCallRoomSession {
         return LiveKitSDKRoomSession(keyProvider: keyProvider, sink: sink)
     }
 
@@ -265,7 +282,7 @@ public final class LiveKitCallContext: LiveKitRoomEventSink {
         isTerminating = true
         joinTimerTask?.cancel()
         connectTask?.cancel()
-        guard let roomSession: LiveKitRoomSession = session else {
+        guard let roomSession: LiveKitCallRoomSession = session else {
             finish(reason)
             return
         }
@@ -340,22 +357,30 @@ private final class LiveKitRoomDelegateBridge: NSObject, RoomDelegate, @unchecke
 }
 
 
-/// The production room session: a LiveKit `Room` with the shared-key encryption of the call.
-private final class LiveKitSDKRoomSession: LiveKitRoomSession {
+/// The production room session: a LiveKit `Room` with the shared-key encryption of the call. The media operations run on the local participant of that room.
+private final class LiveKitSDKRoomSession: LiveKitCallRoomSession {
     private let bridge: LiveKitRoomDelegateBridge
     private let room: Room
+    private let roomMedia: LiveKitRoomMediaSDK
 
 
     init(keyProvider: BaseKeyProvider, sink: LiveKitRoomEventSink) {
         let roomBridge: LiveKitRoomDelegateBridge = LiveKitRoomDelegateBridge(sink: sink)
         let encryption: EncryptionOptions = EncryptionOptions(keyProvider: keyProvider)
         let roomOptions: RoomOptions = RoomOptions(encryptionOptions: encryption)
-        self.bridge = roomBridge
-        self.room = Room(
+        let sdkRoom: Room = Room(
             delegate: roomBridge,
             connectOptions: nil,
             roomOptions: roomOptions
         )
+        self.bridge = roomBridge
+        self.room = sdkRoom
+        self.roomMedia = LiveKitRoomMediaSDK(localParticipant: sdkRoom.localParticipant, isGroupCall: false)
+    }
+
+
+    var remoteParticipants: [LiveKitGroupRemoteParticipant] {
+        return LiveKitGroupRemoteVideo.remoteParticipants(of: room)
     }
 
 
@@ -366,5 +391,40 @@ private final class LiveKitSDKRoomSession: LiveKitRoomSession {
 
     func disconnect() async {
         await room.disconnect()
+    }
+
+
+    func setMicrophoneEnabled(_ isEnabled: Bool) async throws {
+        try await roomMedia.setMicrophoneEnabled(isEnabled)
+    }
+
+
+    func setNoiseSuppressionEnabled(_ isEnabled: Bool) async throws {
+        try await roomMedia.setNoiseSuppressionEnabled(isEnabled)
+    }
+
+
+    func setCameraEnabled(_ isEnabled: Bool) async throws {
+        try await roomMedia.setCameraEnabled(isEnabled)
+    }
+
+
+    func publishScreenShare(_ track: LiveKitLocalVideoTrack) async throws {
+        try await roomMedia.publishScreenShare(track)
+    }
+
+
+    func unpublishScreenShare() async throws {
+        try await roomMedia.unpublishScreenShare()
+    }
+
+
+    func setAudioInputDevice(id: String) async throws {
+        try await roomMedia.setAudioInputDevice(id: id)
+    }
+
+
+    func setAudioOutputDevice(id: String) async throws {
+        try await roomMedia.setAudioOutputDevice(id: id)
     }
 }

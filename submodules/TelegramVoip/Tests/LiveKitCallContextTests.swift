@@ -23,14 +23,75 @@ private enum FakeBehavior {
 }
 
 
+/// The media calls that the fake room records, in the order they were made.
+private enum FakeMediaCall: Equatable {
+    case microphone(Bool)
+    case noiseSuppression(Bool)
+    case camera(Bool)
+    case publishScreenShare
+    case unpublishScreenShare
+    case audioInput(String)
+    case audioOutput(String)
+}
+
+
+private final class FakeLocalVideoTrack: LiveKitLocalVideoTrack {
+    var sdkTrack: LocalVideoTrack? {
+        return nil
+    }
+}
+
+
+private final class FakeRemoteVideoTrack: LiveKitGroupRemoteVideoTrack {
+    var sdkTrack: RemoteVideoTrack? {
+        return nil
+    }
+}
+
+
+private final class FakeRemotePublication: LiveKitGroupRemotePublication {
+    let videoTrack: LiveKitGroupRemoteVideoTrack?
+
+
+    init(videoTrack: LiveKitGroupRemoteVideoTrack?) {
+        self.videoTrack = videoTrack
+    }
+
+
+    func setEnabled(_ isEnabled: Bool) async throws {
+    }
+
+
+    func setVideoQuality(_ quality: LiveKitGroupVideoQuality) async throws {
+    }
+}
+
+
+private final class FakeRemoteParticipant: LiveKitGroupRemoteParticipant {
+    let identity: String?
+    let videoPublications: [LiveKitGroupRemotePublication]
+
+
+    init(
+        identity: String?,
+        videoPublications: [LiveKitGroupRemotePublication]
+    ) {
+        self.identity = identity
+        self.videoPublications = videoPublications
+    }
+}
+
+
 /// A finite fake room session. A hang sleeps for a bounded time and throws when the caller cancels it.
-private final class FakeLiveKitRoomSession: LiveKitRoomSession, @unchecked Sendable {
+private final class FakeLiveKitRoomSession: LiveKitCallRoomSession, @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private let connectBehavior: FakeBehavior
     private let disconnectBehavior: FakeBehavior
     private var recordedUrl: String?
     private var recordedToken: String?
     private var recordedDisconnects: Int = 0
+    private var recordedMediaCalls: [FakeMediaCall] = []
+    private var fakeRemoteParticipants: [LiveKitGroupRemoteParticipant] = []
 
 
     init(
@@ -69,6 +130,31 @@ private final class FakeLiveKitRoomSession: LiveKitRoomSession, @unchecked Senda
     }
 
 
+    var mediaCalls: [FakeMediaCall] {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        return recordedMediaCalls
+    }
+
+
+    var remoteParticipants: [LiveKitGroupRemoteParticipant] {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        return fakeRemoteParticipants
+    }
+
+
+    func setRemoteParticipants(_ participants: [LiveKitGroupRemoteParticipant]) {
+        lock.lock()
+        fakeRemoteParticipants = participants
+        lock.unlock()
+    }
+
+
     func connect(url: String, token: String) async throws {
         lock.lock()
         recordedUrl = url
@@ -83,6 +169,48 @@ private final class FakeLiveKitRoomSession: LiveKitRoomSession, @unchecked Senda
         recordedDisconnects += 1
         lock.unlock()
         try? await run(disconnectBehavior)
+    }
+
+
+    func setMicrophoneEnabled(_ isEnabled: Bool) async throws {
+        record(.microphone(isEnabled))
+    }
+
+
+    func setNoiseSuppressionEnabled(_ isEnabled: Bool) async throws {
+        record(.noiseSuppression(isEnabled))
+    }
+
+
+    func setCameraEnabled(_ isEnabled: Bool) async throws {
+        record(.camera(isEnabled))
+    }
+
+
+    func publishScreenShare(_ track: LiveKitLocalVideoTrack) async throws {
+        record(.publishScreenShare)
+    }
+
+
+    func unpublishScreenShare() async throws {
+        record(.unpublishScreenShare)
+    }
+
+
+    func setAudioInputDevice(id: String) async throws {
+        record(.audioInput(id))
+    }
+
+
+    func setAudioOutputDevice(id: String) async throws {
+        record(.audioOutput(id))
+    }
+
+
+    private func record(_ call: FakeMediaCall) {
+        lock.lock()
+        recordedMediaCalls.append(call)
+        lock.unlock()
     }
 
 
@@ -350,5 +478,77 @@ final class LiveKitCallContextTests: XCTestCase {
         XCTAssertEqual(context.state, .ended(.hungUp))
         context.start()
         XCTAssertNil(session.connectedUrl)
+    }
+
+
+    func testMediaIsNilBeforeStart() throws {
+        let session: FakeLiveKitRoomSession = FakeLiveKitRoomSession(connectBehavior: .succeed, disconnectBehavior: .succeed)
+        let context: LiveKitCallContext = try makeContext(session: session)
+        XCTAssertNil(context.media)
+    }
+
+
+    func testMediaRoutesLocalOperationsToRoomSession() async throws {
+        let session: FakeLiveKitRoomSession = FakeLiveKitRoomSession(connectBehavior: .succeed, disconnectBehavior: .succeed)
+        let context: LiveKitCallContext = try makeContext(session: session)
+        context.start()
+        let reachedConnected: Bool = await waitForState(context) { (state: LiveKitCallState) -> Bool in
+            return state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        guard let media: LiveKitCallMedia = context.media else {
+            XCTFail("The media of a connected call is nil")
+            return
+        }
+        try await media.setMicrophoneEnabled(false)
+        try await media.setNoiseSuppressionEnabled(true)
+        try await media.setCameraEnabled(true)
+        try await media.publishScreenShare(FakeLocalVideoTrack())
+        try await media.unpublishScreenShare()
+        try await media.setAudioInputDevice(id: "input-device")
+        try await media.setAudioOutputDevice(id: "output-device")
+        XCTAssertEqual(session.mediaCalls, [
+            .microphone(false),
+            .noiseSuppression(true),
+            .camera(true),
+            .publishScreenShare,
+            .unpublishScreenShare,
+            .audioInput("input-device"),
+            .audioOutput("output-device")
+        ])
+    }
+
+
+    func testMediaExposesRemoteVideoOfRemoteParticipants() async throws {
+        let session: FakeLiveKitRoomSession = FakeLiveKitRoomSession(connectBehavior: .succeed, disconnectBehavior: .succeed)
+        let track: FakeRemoteVideoTrack = FakeRemoteVideoTrack()
+        let publication: FakeRemotePublication = FakeRemotePublication(videoTrack: track)
+        session.setRemoteParticipants([
+            FakeRemoteParticipant(identity: "p.42", videoPublications: [publication])
+        ])
+        let context: LiveKitCallContext = try makeContext(session: session)
+        context.start()
+        let reachedConnected: Bool = await waitForState(context) { (state: LiveKitCallState) -> Bool in
+            return state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        let participants: [LiveKitGroupRemoteParticipant] = context.media?.remoteParticipants ?? []
+        XCTAssertEqual(participants.count, 1)
+        XCTAssertEqual(participants.first?.identity, "p.42")
+        XCTAssertTrue(participants.first?.videoPublications.first?.videoTrack === track)
+    }
+
+
+    func testMediaIsNilOnceCallIsStopped() async throws {
+        let session: FakeLiveKitRoomSession = FakeLiveKitRoomSession(connectBehavior: .succeed, disconnectBehavior: .succeed)
+        let context: LiveKitCallContext = try makeContext(session: session)
+        context.start()
+        let reachedConnected: Bool = await waitForState(context) { (state: LiveKitCallState) -> Bool in
+            return state == .connected
+        }
+        XCTAssertTrue(reachedConnected)
+        XCTAssertNotNil(context.media)
+        context.stop()
+        XCTAssertNil(context.media)
     }
 }

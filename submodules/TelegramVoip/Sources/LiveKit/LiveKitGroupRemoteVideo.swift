@@ -137,10 +137,16 @@ extension LiveKitGroupRemoteVideo {
     /// Reads the remote participants of a LiveKit room, so the endpoints are looked up in that room.
     public convenience init(room: Room) {
         self.init(remoteParticipants: {
-            return room.remoteParticipants.values.map { (participant: RemoteParticipant) -> LiveKitGroupRemoteParticipant in
-                return LiveKitGroupSDKRemoteParticipant(participant: participant)
-            }
+            return LiveKitGroupRemoteVideo.remoteParticipants(of: room)
         })
+    }
+
+
+    /// The remote participants of a LiveKit room, wrapped for the group seam. The 1:1 call reads its remote tracks the same way.
+    public static func remoteParticipants(of room: Room) -> [LiveKitGroupRemoteParticipant] {
+        return room.remoteParticipants.values.map { (participant: RemoteParticipant) -> LiveKitGroupRemoteParticipant in
+            return LiveKitGroupSDKRemoteParticipant(participant: participant)
+        }
     }
 }
 
