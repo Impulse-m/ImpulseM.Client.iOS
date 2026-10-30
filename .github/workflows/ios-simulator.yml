@@ -56,6 +56,9 @@ jobs:
       - name: Check out submodules except the Rust engine
         run: |
           set -eu
+          # Two submodules use upstream relative URLs, which resolve to repositories this organisation does not have.
+          git config --global url."https://github.com/TelegramMessenger/rlottie.git".insteadOf "https://github.com/Impulse-m/rlottie.git"
+          git config --global url."https://github.com/TelegramMessenger/tgcalls.git".insteadOf "https://github.com/Impulse-m/tgcalls.git"
           # The app no longer builds the Rust engine, so its submodule is not needed.
           git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
             | awk '{print $2}' \
