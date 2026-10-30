@@ -20,6 +20,10 @@
 @property (nonatomic, strong, readonly) NSString * _Nonnull appSpecificUrlScheme;
 @property (nonatomic, readonly) bool isICloudEnabled;
 @property (nonatomic, readonly) bool isSiriEnabled;
+@property (nonatomic, strong, readonly) NSString * _Nonnull impulsemRpcUrl;
+@property (nonatomic, strong, readonly) NSString * _Nonnull impulsemSiteUrl;
+@property (nonatomic, strong, readonly) NSString * _Nonnull impulsemLinkHost;
+@property (nonatomic, strong, readonly) NSString * _Nonnull impulsemWebUrl;
 
 + (NSString * _Nullable)keychainAccessGroupForBaseAppBundleId:(NSString * _Nonnull)baseAppBundleId NS_SWIFT_NAME(keychainAccessGroup(baseAppBundleId:));
 

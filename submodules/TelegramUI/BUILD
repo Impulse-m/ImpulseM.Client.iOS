@@ -74,6 +74,7 @@ swift_library(
         "//submodules/Utils/DeviceModel",
         "//submodules/BuildConfig:BuildConfig",
         "//submodules/BuildConfigExtra:BuildConfigExtra",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
         "//submodules/LottieBinding:LottieBinding",
         "//submodules/LottieSettings:LottieSettings",
         "//submodules/TelegramUpdateUI:TelegramUpdateUI",

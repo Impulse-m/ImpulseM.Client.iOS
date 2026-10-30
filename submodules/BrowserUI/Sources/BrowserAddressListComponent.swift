@@ -571,7 +571,7 @@ final class BrowserAddressListComponent: Component {
                 component: AnyComponent(BrowserAddressListItemComponent(
                     context: component.context,
                     theme: component.theme,
-                    webPage: TelegramMediaWebpage(webpageId: EngineMedia.Id(namespace: 0, id: 0), content: .Loaded(TelegramMediaWebpageLoadedContent(url: "https://impulsem.net", displayUrl: "https://impulsem.net", hash: 0, type: nil, websiteName: "ImpulseM", title: "ImpulseM ImpulseM", text: "ImpulseM", embedUrl: nil, embedType: nil, embedSize: nil, duration: nil, author: nil, isMediaLargeByDefault: nil, imageIsVideoCover: false, image: nil, file: nil, story: nil, attributes: [], instantPage: nil))),
+                    webPage: TelegramMediaWebpage(webpageId: EngineMedia.Id(namespace: 0, id: 0), content: .Loaded(TelegramMediaWebpageLoadedContent(url: "https://example.org", displayUrl: "https://example.org",hash: 0, type: nil, websiteName: "ImpulseM", title: "ImpulseM ImpulseM", text: "ImpulseM", embedUrl: nil, embedType: nil, embedSize: nil, duration: nil, author: nil, isMediaLargeByDefault: nil, imageIsVideoCover: false, image: nil, file: nil, story: nil, attributes: [], instantPage: nil))),
                     message: nil,
                     hasNext: true,
                     insets: .zero,

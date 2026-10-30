@@ -21,7 +21,11 @@ class BuildConfiguration:
         app_specific_url_scheme,
         premium_iap_product_id,
         enable_siri,
-        enable_icloud
+        enable_icloud,
+        impulsem_rpc_url,
+        impulsem_site_url,
+        impulsem_link_host,
+        impulsem_web_url
     ):
         self.bundle_id = bundle_id
         self.api_id = api_id
@@ -35,6 +39,10 @@ class BuildConfiguration:
         self.premium_iap_product_id = premium_iap_product_id
         self.enable_siri = enable_siri
         self.enable_icloud = enable_icloud
+        self.impulsem_rpc_url = impulsem_rpc_url
+        self.impulsem_site_url = impulsem_site_url
+        self.impulsem_link_host = impulsem_link_host
+        self.impulsem_web_url = impulsem_web_url
 
     def write_to_variables_file(self, bazel_path, use_xcode_managed_codesigning, aps_environment, path):
         string = ''
@@ -53,6 +61,10 @@ class BuildConfiguration:
         string += 'telegram_aps_environment = "{}"\n'.format(aps_environment)
         string += 'telegram_enable_siri = {}\n'.format(self.enable_siri)
         string += 'telegram_enable_icloud = {}\n'.format(self.enable_icloud)
+        string += 'telegram_impulsem_rpc_url = "{}"\n'.format(self.impulsem_rpc_url)
+        string += 'telegram_impulsem_site_url = "{}"\n'.format(self.impulsem_site_url)
+        string += 'telegram_impulsem_link_host = "{}"\n'.format(self.impulsem_link_host)
+        string += 'telegram_impulsem_web_url = "{}"\n'.format(self.impulsem_web_url)
         string += 'telegram_enable_watch = True\n'
 
         if os.path.exists(path):
@@ -79,7 +91,11 @@ def build_configuration_from_json(path):
             'app_specific_url_scheme',
             'premium_iap_product_id',
             'enable_siri',
-            'enable_icloud'
+            'enable_icloud',
+            'IMPULSEM_RPC_URL',
+            'IMPULSEM_SITE_URL',
+            'IMPULSEM_LINK_HOST',
+            'IMPULSEM_WEB_URL'
         ]
         for key in required_keys:
             if key not in configuration_dict:
@@ -96,7 +112,11 @@ def build_configuration_from_json(path):
             app_specific_url_scheme=configuration_dict['app_specific_url_scheme'],
             premium_iap_product_id=configuration_dict['premium_iap_product_id'],
             enable_siri=configuration_dict['enable_siri'],
-            enable_icloud=configuration_dict['enable_icloud']
+            enable_icloud=configuration_dict['enable_icloud'],
+            impulsem_rpc_url=configuration_dict['IMPULSEM_RPC_URL'],
+            impulsem_site_url=configuration_dict['IMPULSEM_SITE_URL'],
+            impulsem_link_host=configuration_dict['IMPULSEM_LINK_HOST'],
+            impulsem_web_url=configuration_dict['IMPULSEM_WEB_URL']
         )
 
 

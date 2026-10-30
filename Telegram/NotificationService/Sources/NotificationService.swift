@@ -857,7 +857,7 @@ private final class NotificationServiceHandler {
             deviceModelName: nil,
             useBetaFeatures: !buildConfig.isAppStoreBuild,
             isICloudEnabled: false,
-            networkEngineFactory: ImpulseNetworkEngineFactory()
+            networkEngineFactory: ImpulseNetworkEngineFactory(baseUrl: buildConfig.impulsemRpcUrl)
         )
         
         let isLockedMessage: String?

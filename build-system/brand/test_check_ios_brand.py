@@ -19,7 +19,7 @@ import check_ios_brand  # noqa: E402
 CLEAN_FILES: Dict[str, str] = {
     "Telegram/Telegram-iOS/en.lproj/Localizable.strings": '"Hello" = "Welcome to ImpulseM";\n',
     "submodules/TelegramPresentationData/Sources/DefaultDayPresentationTheme.swift": "let accent = UIColor(rgb: 0x2085DF)\n",
-    "submodules/SettingsUI/Sources/Link.swift": 'let link = "https://o.impulsem.net/addlist/abc"\n',
+    "submodules/SettingsUI/Sources/Link.swift": 'let link = "https://o.example.org/addlist/abc"\n',
     "submodules/SettingsUI/Sources/Gift.swift": 'let gift = "https://t.me/nft/abc"\n',
     "submodules/SettingsUI/Tests/LinkTests.swift": 'let fixture = "https://t.me/addlist/abc"\n',
     "build-system/brand/fixture.txt": "ph.telegra.Telegraph 0x0088ff\n",

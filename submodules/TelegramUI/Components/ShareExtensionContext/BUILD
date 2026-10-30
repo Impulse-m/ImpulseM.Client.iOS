@@ -14,6 +14,7 @@ swift_library(
         "//submodules/Display",
         "//submodules/TelegramCore",
         "//submodules/ImpulseNetworkEngine:ImpulseNetworkEngine",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
         "//submodules/PasscodeCore",
         "//submodules/SSignalKit/SwiftSignalKit",
         "//submodules/TelegramPresentationData",

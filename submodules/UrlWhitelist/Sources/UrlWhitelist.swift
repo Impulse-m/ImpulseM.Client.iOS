@@ -1,16 +1,14 @@
 import Foundation
 import UrlEscaping
+import ImpulseBuildSettings
 
 private let whitelistedHosts: Set<String> = Set([
     "t.me",
     "telegram.me",
     "telegra.ph",
     "telesco.pe",
-    "fragment.com",
-    "o.impulsem.net",
-    "p.impulsem.net",
-    "impulsem.net"
-])
+    "fragment.com"
+] + ImpulseBuildSettings.ownerHosts)
 
 public func isConcealedUrlWhitelisted(_ url: URL) -> Bool {
     if var host = url.host?.lowercased() {

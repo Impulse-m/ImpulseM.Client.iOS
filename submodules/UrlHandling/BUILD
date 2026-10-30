@@ -18,6 +18,7 @@ swift_library(
         "//submodules/TelegramNotices:TelegramNotices",
         "//submodules/WalletContext:WalletContext",
         "//submodules/ImpulseProxy:ImpulseProxy",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
     ],
     visibility = [
         "//visibility:public",

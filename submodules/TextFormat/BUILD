@@ -18,6 +18,7 @@ swift_library(
         "//submodules/TelegramPresentationData:TelegramPresentationData",
         "//submodules/Markdown:Markdown",
         "//submodules/Emoji:Emoji",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
         "//third-party/libprisma",
     ],
     visibility = [

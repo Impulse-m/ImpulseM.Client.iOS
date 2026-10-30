@@ -203,6 +203,22 @@ API_AVAILABLE(ios(10))
     return APP_CONFIG_IS_SIRI_ENABLED;
 }
 
+- (NSString *)impulsemRpcUrl {
+    return @(APP_CONFIG_IMPULSEM_RPC_URL);
+}
+
+- (NSString *)impulsemSiteUrl {
+    return @(APP_CONFIG_IMPULSEM_SITE_URL);
+}
+
+- (NSString *)impulsemLinkHost {
+    return @(APP_CONFIG_IMPULSEM_LINK_HOST);
+}
+
+- (NSString *)impulsemWebUrl {
+    return @(APP_CONFIG_IMPULSEM_WEB_URL);
+}
+
 + (NSString * _Nullable)bundleSeedId {
     NSDictionary *query = [NSDictionary dictionaryWithObjectsAndKeys:
        (__bridge NSString *)kSecClassGenericPassword, (__bridge NSString *)kSecClass,

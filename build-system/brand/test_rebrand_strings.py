@@ -99,17 +99,28 @@ class RebrandTextTest(unittest.TestCase):
     def test_short_link_host_is_rebranded(self) -> None:
         self.assertEqual(
             rebrand_strings.rebrand_text("https://t.me/Telegram"),
-            "https://o.impulsem.net/Telegram"
+            "https://o.example.org/Telegram"
         )
 
     def test_subdomain_of_telegram_org_is_kept(self) -> None:
-        self.assertEqual(rebrand_strings.rebrand_text("core.telegram.org/api"), "core.impulsem.net/api")
+        self.assertEqual(rebrand_strings.rebrand_text("core.telegram.org/api"), "core.example.org/api")
 
     def test_telegram_org_host_is_rebranded(self) -> None:
-        self.assertEqual(rebrand_strings.rebrand_text("telegram.org/blog"), "impulsem.net/blog")
+        self.assertEqual(rebrand_strings.rebrand_text("telegram.org/blog"), "example.org/blog")
 
     def test_telesco_host_is_rebranded(self) -> None:
-        self.assertEqual(rebrand_strings.rebrand_text("telesco.pe/x"), "p.impulsem.net/x")
+        self.assertEqual(rebrand_strings.rebrand_text("telesco.pe/x"), "o.example.org/x")
+
+    def test_configured_hosts_replace_the_placeholders(self) -> None:
+        replacements = rebrand_strings.host_replacements("o.acme.test", "acme.test")
+        self.assertEqual(
+            rebrand_strings.rebrand_text("https://t.me/Telegram and telegram.org/blog", replacements),
+            "https://o.acme.test/Telegram and acme.test/blog"
+        )
+
+    def test_site_host_is_taken_from_a_site_url(self) -> None:
+        self.assertEqual(rebrand_strings.site_host_from_url("https://example.org/"), "example.org")
+        self.assertEqual(rebrand_strings.site_host_from_url(""), "")
 
     def test_host_inside_longer_word_is_kept(self) -> None:
         self.assertEqual(rebrand_strings.rebrand_text("product.media"), "product.media")
@@ -149,7 +160,7 @@ class RebrandFileTest(unittest.TestCase):
         self.assertEqual(after[3], "\"Premium.Protected\" = \"{Telegram} and @Telegram\";")
         self.assertEqual(after[4], "\"org.telegram.key\" = \"Plain text\";")
         self.assertEqual(after[5], "\"Menu.Escaped\" = \"Say \\\"ImpulseM\\\"\\nImpulseM is here\";")
-        self.assertEqual(after[6], "\"Menu.Link\" = \"Open https://o.impulsem.net/Telegram or impulsem.net/blog\";")
+        self.assertEqual(after[6], "\"Menu.Link\" = \"Open https://o.example.org/Telegram or example.org/blog\";")
         self.assertEqual(after[7], "\"Menu.Multi\" = \"Optimizing ImpulseM...")
         self.assertEqual(after[8], "This is ImpulseM.\";")
 

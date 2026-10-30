@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import TelegramCore
 import Emoji
+import ImpulseBuildSettings
 
 private let whitelistedHosts: Set<String> = Set([
     "telegram.org",
@@ -9,11 +10,8 @@ private let whitelistedHosts: Set<String> = Set([
     "telegram.me",
     "telegra.ph",
     "telesco.pe",
-    "fragment.com",
-    "o.impulsem.net",
-    "p.impulsem.net",
-    "impulsem.net"
-])
+    "fragment.com"
+] + ImpulseBuildSettings.ownerHosts)
 
 private let dataDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType([.link]).rawValue)
 private let dataAndPhoneNumberDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType([.link, .phoneNumber]).rawValue)

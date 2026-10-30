@@ -8,12 +8,12 @@ import TelegramUIPreferences
 import TelegramNotices
 import AccountContext
 import WalletContext
+import ImpulseBuildSettings
 
 private let baseTelegramMePaths = [
     "telegram.me",
-    "t.me", "telegram.dog",
-    "o.impulsem.net", "impulsem.net"
-]
+    "t.me", "telegram.dog"
+] + ImpulseBuildSettings.ownerHosts
 private let telegramWebShortLinkHosts = [
     "a.t.me", 
     "k.t.me",

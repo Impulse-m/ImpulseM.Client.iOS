@@ -12,6 +12,7 @@ import UIKit
 import GeneratedSources
 import WidgetItems
 import ImpulseNetworkEngine
+import ImpulseBuildSettings
 
 /// The account the extension opened for an earlier request. The process outlives a single
 /// request, and opening an account costs time Siri does not give us, so it is kept - but only
@@ -241,7 +242,7 @@ class DefaultIntentHandler: INExtension, INSendMessageIntentHandling, INSearchFo
             guard currentRecordId != nil else {
                 return .single(nil)
             }
-            return currentAccount(allocateIfNotExists: false, networkArguments: NetworkInitializationArguments(apiId: apiId, apiHash: apiHash, languagesCategory: languagesCategory, appVersion: appVersion, voipMaxLayer: 0, voipVersions: [], appData: .single(buildConfig.bundleData(withAppToken: nil, tokenType: nil, tokenEnvironment: nil, signatureDict: nil)), externalRequestVerificationStream: .never(), externalRecaptchaRequestVerification: { _, _ in return .never() }, autolockDeadine: .single(nil), encryptionProvider: OpenSSLEncryptionProvider(), deviceModelName: nil, useBetaFeatures: !buildConfig.isAppStoreBuild, isICloudEnabled: false, networkEngineFactory: ImpulseNetworkEngineFactory()), supplementary: true, manager: accountManager, rootPath: rootPath, auxiliaryMethods: accountAuxiliaryMethods, encryptionParameters: encryptionParameters)
+            return currentAccount(allocateIfNotExists: false, networkArguments: NetworkInitializationArguments(apiId: apiId, apiHash: apiHash, languagesCategory: languagesCategory, appVersion: appVersion, voipMaxLayer: 0, voipVersions: [], appData: .single(buildConfig.bundleData(withAppToken: nil, tokenType: nil, tokenEnvironment: nil, signatureDict: nil)), externalRequestVerificationStream: .never(), externalRecaptchaRequestVerification: { _, _ in return .never() }, autolockDeadine: .single(nil), encryptionProvider: OpenSSLEncryptionProvider(), deviceModelName: nil, useBetaFeatures: !buildConfig.isAppStoreBuild, isICloudEnabled: false, networkEngineFactory: ImpulseNetworkEngineFactory(baseUrl: ImpulseBuildSettings.rpcUrl)), supplementary: true, manager: accountManager, rootPath: rootPath, auxiliaryMethods: accountAuxiliaryMethods, encryptionParameters: encryptionParameters)
             |> mapToSignal { account -> Signal<Account?, NoError> in
                 if let account = account {
                     switch account {

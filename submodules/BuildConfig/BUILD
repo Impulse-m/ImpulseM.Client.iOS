@@ -11,6 +11,10 @@ load(
     "telegram_app_specific_url_scheme",
     "telegram_enable_icloud",
     "telegram_enable_siri",
+    "telegram_impulsem_rpc_url",
+    "telegram_impulsem_site_url",
+    "telegram_impulsem_link_host",
+    "telegram_impulsem_web_url",
 )
 
 objc_library(
@@ -31,6 +35,10 @@ objc_library(
         "-DAPP_SPECIFIC_URL_SCHEME=\\\"{}\\\"".format(telegram_app_specific_url_scheme),
         "-DAPP_CONFIG_IS_ICLOUD_ENABLED={}".format("true" if telegram_enable_icloud else "false"),
         "-DAPP_CONFIG_IS_SIRI_ENABLED={}".format("true" if telegram_enable_siri else "false"),
+        "-DAPP_CONFIG_IMPULSEM_RPC_URL=\\\"{}\\\"".format(telegram_impulsem_rpc_url),
+        "-DAPP_CONFIG_IMPULSEM_SITE_URL=\\\"{}\\\"".format(telegram_impulsem_site_url),
+        "-DAPP_CONFIG_IMPULSEM_LINK_HOST=\\\"{}\\\"".format(telegram_impulsem_link_host),
+        "-DAPP_CONFIG_IMPULSEM_WEB_URL=\\\"{}\\\"".format(telegram_impulsem_web_url),
     ],
     hdrs = glob([
         "PublicHeaders/**/*.h",

@@ -18,6 +18,7 @@ import UrlWhitelist
 import OpenInExternalAppUI
 import SafariServices
 import TelegramPresentationData
+import ImpulseBuildSettings
 
 private struct ChatLinkOpenMode {
     let shouldOpenInApp: Bool
@@ -78,7 +79,7 @@ private func chatLinkContextMenuOpenMode(context: AccountContext, url: String) -
     if host.isEmpty {
         return .single(nil)
     }
-    if host == "t.me" || host == "telegram.me" || host == "telegram.dog" || host == "o.impulsem.net" {
+    if host == "t.me" || host == "telegram.me" || host == "telegram.dog" || ImpulseBuildSettings.ownerHosts.contains(host) {
         return .single(nil)
     }
     if host.hasSuffix(".ton") || scheme.hasPrefix("tonsite") {

@@ -687,9 +687,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             useBetaFeatures: !buildConfig.isAppStoreBuild,
             isICloudEnabled: buildConfig.isICloudEnabled,
             // The ImpulseM network engine serves the app and its app extensions alike.
-            networkEngineFactory: ImpulseNetworkEngineFactory()
+            networkEngineFactory: ImpulseNetworkEngineFactory(baseUrl: buildConfig.impulsemRpcUrl)
         )
-        
+
         guard let appGroupUrl = maybeAppGroupUrl else {
             self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
             return true

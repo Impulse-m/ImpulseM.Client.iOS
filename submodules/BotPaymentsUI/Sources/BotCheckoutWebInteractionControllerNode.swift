@@ -5,6 +5,7 @@ import AsyncDisplayKit
 @preconcurrency import WebKit
 import TelegramPresentationData
 import AccountContext
+import ImpulseBuildSettings
 
 private class WeakPaymentScriptMessageHandler: NSObject, WKScriptMessageHandler {
     private let f: (WKScriptMessage) -> ()
@@ -147,7 +148,7 @@ final class BotCheckoutWebInteractionControllerNode: ViewControllerTracingNode, 
     
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if case let .externalVerification(completion) = self.intent, let host = navigationAction.request.url?.host {
-            if host == "t.me" || host == "telegram.me" || host == "o.impulsem.net" {
+            if host == "t.me" || host == "telegram.me" || ImpulseBuildSettings.ownerHosts.contains(host) {
                 decisionHandler(.cancel)
                 completion(true)
             } else {

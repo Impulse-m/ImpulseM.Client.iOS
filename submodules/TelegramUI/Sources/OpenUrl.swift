@@ -16,6 +16,7 @@ import PresentationDataUtils
 import UrlWhitelist
 import OpenUserGeneratedUrl
 import DebugCompanionScreen
+import ImpulseBuildSettings
 
 public struct ParsedSecureIdUrl {
     public let peerId: EnginePeer.Id
@@ -225,7 +226,7 @@ private func makeInternalUrlHandler(
 }
 
 private let internetSchemes: [String] = ["http", "https"]
-private let telegramMeHosts: [String] = ["t.me", "telegram.me", "telegram.dog", "o.impulsem.net", "impulsem.net"]
+private let telegramMeHosts: [String] = ["t.me", "telegram.me", "telegram.dog"] + ImpulseBuildSettings.ownerHosts
 
 private func handleInternetUrl(
     parsedUrl: URL,

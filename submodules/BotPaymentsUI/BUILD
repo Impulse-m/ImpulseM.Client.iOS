@@ -16,6 +16,7 @@ swift_library(
         "//submodules/TelegramPresentationData:TelegramPresentationData",
         "//submodules/LocalAuth:LocalAuth",
         "//submodules/AccountContext:AccountContext",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
         "//submodules/Components/ViewControllerComponent:ViewControllerComponent",
         "//submodules/Components/ResizableSheetComponent",
         "//submodules/Components/MultilineTextComponent",

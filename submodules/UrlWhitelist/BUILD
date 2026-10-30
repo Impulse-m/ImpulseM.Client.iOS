@@ -11,6 +11,7 @@ swift_library(
     ],
     deps = [
         "//submodules/UrlEscaping",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
     ],
     visibility = [
         "//visibility:public",

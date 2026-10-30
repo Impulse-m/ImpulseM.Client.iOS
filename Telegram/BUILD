@@ -1490,6 +1490,7 @@ swift_library(
         "//submodules/Postbox:Postbox",
         "//submodules/TelegramCore:TelegramCore",
         "//submodules/ImpulseNetworkEngine:ImpulseNetworkEngine",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
         "//submodules/BuildConfig:BuildConfig",
         "//submodules/OpenSSLEncryptionProvider:OpenSSLEncryptionProvider",
         "//submodules/AppLockState:AppLockState",

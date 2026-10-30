@@ -94,6 +94,30 @@ jobs:
           restore-keys: |
             ios-bazel-disk-${{ hashFiles('versions.json') }}-debug_sim_arm64-
 
+      - name: Write owner service settings into the configuration
+        env:
+          IMPULSEM_RPC_URL: ${{ vars.IMPULSEM_RPC_URL }}
+          IMPULSEM_SITE_URL: ${{ vars.IMPULSEM_SITE_URL }}
+          IMPULSEM_LINK_HOST: ${{ vars.IMPULSEM_LINK_HOST }}
+          IMPULSEM_WEB_URL: ${{ vars.IMPULSEM_WEB_URL }}
+        run: |
+          python3 -I - <<'EOF'
+          import json
+          import os
+
+          path = 'build-system/impulsem-configuration.json'
+          keys = ['IMPULSEM_RPC_URL', 'IMPULSEM_SITE_URL', 'IMPULSEM_LINK_HOST', 'IMPULSEM_WEB_URL']
+
+          with open(path) as file:
+              configuration = json.load(file)
+
+          for key in keys:
+              configuration[key] = os.environ.get(key, '')
+
+          with open(path, 'w') as file:
+              json.dump(configuration, file, indent='\t')
+          EOF
+
       - name: Generate Xcode project
         run: |
           set -o pipefail

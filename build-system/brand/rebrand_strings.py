@@ -4,7 +4,8 @@
 Stdlib only. The word rule follows the Android build-time rule (BrandText), and the host rule
 follows the server language pack rule: Telegram hosts map to ImpulseM hosts, with subdomains kept.
 Only the values of "key" = "value"; lines change. Keys, comments, line endings and every other
-byte of the file are kept.
+byte of the file are kept. The target hosts come from IMPULSEM_LINK_HOST and IMPULSEM_SITE_URL
+(reserved example hosts when unset).
 
 Modes:
   --apply FILE   rewrite the file in place
@@ -12,6 +13,7 @@ Modes:
 """
 
 import argparse
+import os
 import re
 import sys
 from typing import Dict, List, Tuple
@@ -20,13 +22,44 @@ from typing import Dict, List, Tuple
 BRAND_NAME: str = "ImpulseM"
 BRAND_UPPER: str = "IMPULSEM"
 
-HOST_REPLACEMENTS: Dict[str, str] = {
-    "t.me": "o.impulsem.net",
-    "telegram.me": "o.impulsem.net",
-    "telegram.dog": "o.impulsem.net",
-    "telesco.pe": "p.impulsem.net",
-    "telegram.org": "impulsem.net",
-}
+LINK_HOST_ENVIRONMENT: str = "IMPULSEM_LINK_HOST"
+SITE_URL_ENVIRONMENT: str = "IMPULSEM_SITE_URL"
+
+# Used when IMPULSEM_LINK_HOST and IMPULSEM_SITE_URL are not set, so that a checkout without
+# configuration rebrands to reserved example hosts and never to an owner host.
+PLACEHOLDER_LINK_HOST: str = "o.example.org"
+PLACEHOLDER_SITE_HOST: str = "example.org"
+
+
+def host_replacements(link_host: str, site_host: str) -> Dict[str, str]:
+    return {
+        "t.me": link_host,
+        "telegram.me": link_host,
+        "telegram.dog": link_host,
+        "telesco.pe": link_host,
+        "telegram.org": site_host,
+    }
+
+
+def site_host_from_url(site_url: str) -> str:
+    host: str = site_url.strip()
+
+    for scheme in ("https://", "http://"):
+        if host.lower().startswith(scheme):
+            host = host[len(scheme):]
+
+    return host.rstrip("/")
+
+
+def configured_host_replacements() -> Dict[str, str]:
+    link_host: str = os.environ.get(LINK_HOST_ENVIRONMENT, "").strip().lower() or PLACEHOLDER_LINK_HOST
+    site_url: str = os.environ.get(SITE_URL_ENVIRONMENT, "").strip()
+    site_host: str = site_host_from_url(site_url) or PLACEHOLDER_SITE_HOST
+
+    return host_replacements(link_host, site_host)
+
+
+DEFAULT_HOST_REPLACEMENTS: Dict[str, str] = host_replacements(PLACEHOLDER_LINK_HOST, PLACEHOLDER_SITE_HOST)
 
 NATIVE_SPELLINGS: List[str] = [
     "تيليجرام",
@@ -84,14 +117,14 @@ def park(
     return f"{HOLD_OPEN}{len(held) - 1}{HOLD_CLOSE}"
 
 
-def rebrand_text(value: str) -> str:
+def rebrand_text(value: str, replacements: Dict[str, str] = DEFAULT_HOST_REPLACEMENTS) -> str:
     held: List[str] = []
     working: str = value
 
     for pattern in EXCLUSION_PATTERNS:
         working = pattern.sub(lambda match: park(held, match.group(0)), working)
 
-    working = HOST_PATTERN.sub(lambda match: HOST_REPLACEMENTS[match.group(1).lower()], working)
+    working = HOST_PATTERN.sub(lambda match: replacements[match.group(1).lower()], working)
 
     for spelling in NATIVE_SPELLINGS:
         working = working.replace(spelling, BRAND_NAME)
@@ -115,7 +148,7 @@ def split_byte_order_mark(text: str) -> Tuple[str, str]:
     return "", text
 
 
-def rebrand_file_text(text: str) -> Tuple[str, int]:
+def rebrand_file_text(text: str, replacements: Dict[str, str] = DEFAULT_HOST_REPLACEMENTS) -> Tuple[str, int]:
     prefix: str
     body: str
     prefix, body = split_byte_order_mark(text)
@@ -126,7 +159,7 @@ def rebrand_file_text(text: str) -> Tuple[str, int]:
 
     for match in ENTRY_PATTERN.finditer(body):
         value: str = match.group(2)
-        rebranded: str = rebrand_text(value)
+        rebranded: str = rebrand_text(value, replacements)
 
         pieces.append(body[position:match.start(2)])
         pieces.append(rebranded)
@@ -140,7 +173,7 @@ def rebrand_file_text(text: str) -> Tuple[str, int]:
     return prefix + "".join(pieces), changed
 
 
-def find_violations(text: str) -> List[Tuple[int, str]]:
+def find_violations(text: str, replacements: Dict[str, str] = DEFAULT_HOST_REPLACEMENTS) -> List[Tuple[int, str]]:
     prefix: str
     body: str
     prefix, body = split_byte_order_mark(text)
@@ -150,7 +183,7 @@ def find_violations(text: str) -> List[Tuple[int, str]]:
     for match in ENTRY_PATTERN.finditer(body):
         value: str = match.group(2)
 
-        if rebrand_text(value) != value:
+        if rebrand_text(value, replacements) != value:
             number: int = body.count("\n", 0, match.start(2)) + 1
             violations.append((number, value))
 
@@ -167,11 +200,11 @@ def read_text(path: str) -> str:
     return raw.decode("utf-8")
 
 
-def apply_file(path: str) -> int:
+def apply_file(path: str, replacements: Dict[str, str] = DEFAULT_HOST_REPLACEMENTS) -> int:
     text: str = read_text(path)
     rewritten: str
     changed: int
-    rewritten, changed = rebrand_file_text(text)
+    rewritten, changed = rebrand_file_text(text, replacements)
 
     if changed > 0:
         with open(path, "wb") as handle:
@@ -182,8 +215,8 @@ def apply_file(path: str) -> int:
     return 0
 
 
-def check_file(path: str) -> int:
-    violations: List[Tuple[int, str]] = find_violations(read_text(path))
+def check_file(path: str, replacements: Dict[str, str] = DEFAULT_HOST_REPLACEMENTS) -> int:
+    violations: List[Tuple[int, str]] = find_violations(read_text(path), replacements)
 
     if len(violations) > 0:
         for number, value in violations:
@@ -208,10 +241,12 @@ def main(argv: List[str]) -> int:
     args: argparse.Namespace = parser.parse_args(argv)
 
     try:
-        if args.apply is not None:
-            return apply_file(args.apply)
+        replacements: Dict[str, str] = configured_host_replacements()
 
-        return check_file(args.check)
+        if args.apply is not None:
+            return apply_file(args.apply, replacements)
+
+        return check_file(args.check, replacements)
     except (OSError, ValueError) as error:
         print(str(error), file=sys.stderr)
 
