@@ -129,18 +129,6 @@ jobs:
               json.dump(configuration, file, indent='\t')
           EOF
 
-      - name: Generate Xcode project
-        run: |
-          set -o pipefail
-          mkdir -p build-logs
-          python3 build-system/Make/Make.py \
-            --overrideXcodeVersion \
-            --cacheDir="$HOME/bazel-disk-cache" \
-            generateProject \
-            --configurationPath=build-system/impulsem-configuration.json \
-            --codesigningInformationPath=build-system/fake-codesigning \
-            --disableProvisioningProfiles 2>&1 | tee build-logs/make-generate-project.log
-
       - name: Build simulator app
         run: |
           set -o pipefail
