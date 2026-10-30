@@ -396,7 +396,8 @@ private func makeService(
     gate: RequestServiceGate?,
     signedIn: Bool,
     counter: RequestServiceCounter,
-    clock: RequestServiceClock = RequestServiceClock()
+    clock: RequestServiceClock = RequestServiceClock(),
+    loginGate: ImpulseLoginGate? = nil
 ) -> ImpulseRequestService {
     let unused: RequestServiceCarrier = RequestServiceCarrier(replies: [], delays: [:])
     return ImpulseRequestService(
@@ -409,7 +410,8 @@ private func makeService(
         onAuthorizationRequired: {
             counter.increment()
         },
-        clock: clock
+        clock: clock,
+        loginGate: loginGate
     )
 }
 
@@ -814,6 +816,36 @@ final class ImpulseRequestServiceTests: XCTestCase {
 
         XCTAssertEqual(result.successValue, [9])
         XCTAssertEqual(carrier.sentMethods().count, 1)
+    }
+
+
+    /// The installer stores the tokens before it rekeys the socket and opens the gate. A call that starts in between sees a
+    /// stored session, but it waits for the gate, and it is sent only after the gate opens.
+    func testRequestNeedingLoginWaitsWhileTheGateIsClosedEvenWithStoredTokens() async throws {
+        let session: RequestServiceSession = RequestServiceSession(loggedIn: true, proactive: false, refreshOutcome: .refreshed)
+        let carrier: RequestServiceCarrier = RequestServiceCarrier(replies: [.success([9])], delays: [:])
+        let gate: ImpulseLoginGate = ImpulseLoginGate(isOpen: false)
+        let service: ImpulseRequestService = makeService(
+            session: session,
+            update: carrier,
+            gate: nil,
+            signedIn: false,
+            counter: RequestServiceCounter(),
+            loginGate: gate
+        )
+
+        let call: ImpulseRequestCall = service.submit(
+            request: request(method: "messages.sendMessage"),
+            options: ImpulseRequestOptions()
+        )
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(carrier.sentMethods().isEmpty)
+
+        gate.setOpen(true)
+        let result: Result<[UInt8], ImpulseRequestFailure> = await call.result.value
+
+        XCTAssertEqual(result.successValue, [9])
+        XCTAssertEqual(carrier.sentMethods(), ["messages.sendMessage"])
     }
 
 

@@ -127,8 +127,8 @@ public enum ImpulseRequestPolicy {
     private static let slowmodeWaitText: String = "SLOWMODE_WAIT_"
 
 
-    /// True when a request that needs a user waits for a login: no user is logged in and the request is not
-    /// marked as usable without one.
+    /// True when a request that needs a user waits for a login: `loggedIn` (the login gate, open when a user is logged in)
+    /// is closed and the request is not marked as usable without one.
     public static func mustWaitForLogin(
         options: ImpulseRequestOptions,
         loggedIn: Bool
@@ -369,6 +369,17 @@ public final class ImpulseLoginGate: @unchecked Sendable {
     }
 
 
+    /// True while the gate is open. The gate is the login state of the requests: a request that needs a login waits while
+    /// it is closed, even when a session is stored, because the tokens are stored before the socket is rekeyed and the gate opens.
+    internal var isOpenNow: Bool {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        return self.isOpen
+    }
+
+
     /// Returns true once the gate is open, and false when the waiting task is cancelled first.
     internal func wait() async -> Bool {
         let identifier: UUID = UUID()
@@ -519,14 +530,13 @@ public final class ImpulseRequestService: Sendable {
         request: ImpulseEncodedRequest,
         options: ImpulseRequestOptions
     ) async -> Result<[UInt8], ImpulseRequestFailure> {
-        var signedIn: Bool = await self.session.hasSession()
-        if ImpulseRequestPolicy.mustWaitForLogin(options: options, loggedIn: signedIn) {
+        if ImpulseRequestPolicy.mustWaitForLogin(options: options, loggedIn: self.loginGate.isOpenNow) {
             let released: Bool = await self.loginGate.wait()
             if !released {
                 return .failure(.canceled)
             }
-            signedIn = await self.session.hasSession()
         }
+        let signedIn: Bool = await self.session.hasSession()
 
         let route: ImpulseCarrierRoute = ImpulseCarrier.route(method: request.method, signedIn: signedIn)
         if case .refused(let refusal) = route {
