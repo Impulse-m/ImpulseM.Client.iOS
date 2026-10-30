@@ -10,6 +10,9 @@ swift_library(
     ]),
     copts = [
         "-suppress-warnings",
+        # The sources use the package access level, which SwiftPM names automatically.
+        "-package-name",
+        "SwiftProtobuf",
     ],
     deps = [
     ],

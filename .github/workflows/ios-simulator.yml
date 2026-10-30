@@ -140,6 +140,7 @@ jobs:
             --configurationPath=build-system/impulsem-configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning \
             --disableProvisioningProfiles \
+            --continueOnError \
             --configuration=debug_sim_arm64 \
             --buildNumber=10000 2>&1 | tee build-logs/make-build.log
 
