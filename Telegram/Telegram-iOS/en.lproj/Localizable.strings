@@ -533,7 +533,7 @@
 "Conversation.Contact" = "Contact";
 "Conversation.BlockUser" = "Block User";
 "Conversation.UnblockUser" = "Unblock User";
-"Conversation.UnsupportedMedia" = "This message is not supported on your version of ImpulseM. Update the app to view:\nhttps://impulsem.net/update";
+"Conversation.UnsupportedMedia" = "This message is not supported on your version of ImpulseM. Update the app to view:\n{IMPULSEM_SITE_URL}/update";
 "Conversation.EncryptionWaiting" = "Waiting for %@ to get online...";
 "Conversation.EncryptionProcessing" = "Exchanging encryption keys...";
 "Conversation.EmptyPlaceholder" = "No messages here yet...";
@@ -718,7 +718,7 @@
 
 // Encryption Key
 "EncryptionKey.Title" = "Encryption Key";
-"EncryptionKey.Description" = "This image and text were derived from the encryption key for this secret chat with %1$@.\n\n If they look the same on %2$@'s device, end-to-end encryption is guaranteed.\n\nLearn more at impulsem.net";
+"EncryptionKey.Description" = "This image and text were derived from the encryption key for this secret chat with %1$@.\n\n If they look the same on %2$@'s device, end-to-end encryption is guaranteed.\n\nLearn more at {IMPULSEM_SITE_URL}";
 
 // Conversation media
 "ConversationMedia.Title" = "Media";
@@ -755,7 +755,7 @@
 "Settings.ChatBackground" = "Chat Background";
 "Settings.Support" = "Ask a Question";
 "Settings.FAQ" = "ImpulseM FAQ";
-"Settings.FAQ_URL" = "https://impulsem.net/faq#general";
+"Settings.FAQ_URL" = "{IMPULSEM_SITE_URL}/faq#general";
 "Settings.FAQ_Intro" = "Please note that ImpulseM Support is done by volunteers. We try to respond as quickly as possible, but it may take a while.\n\nPlease take a look at the ImpulseM FAQ: it has important troubleshooting tips and answers to most questions.";
 "Settings.FAQ_Button" = "FAQ";
 "Settings.SaveIncomingPhotos" = "Save Incoming Photos";
@@ -1216,7 +1216,7 @@
 "DialogList.SearchSectionGlobal" = "Global Search";
 "DialogList.SearchSectionMessages" = "Messages";
 
-"Username.LinkHint" = "This link opens a chat with you in ImpulseM:[\nhttps://o.impulsem.net/%@]";
+"Username.LinkHint" = "This link opens a chat with you in ImpulseM:[\nhttps://{IMPULSEM_LINK_HOST}/%@]";
 "Username.LinkCopied" = "Copied link to clipboard";
 
 "SharedMedia.DeleteItemsConfirmation_1" = "Delete media file?";
@@ -1603,7 +1603,7 @@
 
 "Channel.Username.Title" = "Link";
 "Channel.Username.Help" = "You can choose a channel name on **ImpulseM**. If you do, other people will be able to find your channel by this name.\n\nYou can use **a-z**, **0-9** and underscores. Minimum length is **5** characters.";
-"Channel.Username.LinkHint" = "This link opens your channel in ImpulseM:[\nhttps://o.impulsem.net/%@]";
+"Channel.Username.LinkHint" = "This link opens your channel in ImpulseM:[\nhttps://{IMPULSEM_LINK_HOST}/%@]";
 "Channel.Username.InvalidTooShort" = "Channel names must have at least 5 characters.";
 "Channel.Username.InvalidStartsWithNumber" = "Channel names can't start with a number.";
 "Channel.Username.InvalidCharacters" = "Sorry, this name is invalid.";
@@ -2909,7 +2909,7 @@ Unused sets are archived when you add more.";
 "SocksProxySetup.UseForCalls" = "Use for calls";
 "SocksProxySetup.UseForCallsHelp" = "Proxy servers may degrade the quality of your calls.";
 
-"InviteText.URL" = "https://impulsem.net/dl";
+"InviteText.URL" = "{IMPULSEM_SITE_URL}/dl";
 "InviteText.SingleContact" = "Hey, I'm using ImpulseM to chat. Join me! Download it here: %@";
 "InviteText.ContactsCountText_1" = "Hey, I'm using ImpulseM to chat. Join me! Download it here: {url}";
 "InviteText.ContactsCountText_2" = "Hey, I'm using ImpulseM to chat – and so are 2 of our other contacts. Join us! Download it here: {url}";
@@ -3362,7 +3362,7 @@ Unused sets are archived when you add more.";
 "Passport.InfoTitle" = "What is ImpulseM Passport?";
 "Passport.InfoText" = "With **ImpulseM Passport** you can easily sign up for websites and services that require identity verification.\n\nYour information, personal data, and documents are protected by end-to-end encryption. Nobody, including ImpulseM, can access them without your permission.";
 "Passport.InfoLearnMore" = "Learn More";
-"Passport.InfoFAQ_URL" = "https://impulsem.net/faq#passport";
+"Passport.InfoFAQ_URL" = "{IMPULSEM_SITE_URL}/faq#passport";
 
 "Passport.PassportInformation" = "PASSPORT INFORMATION";
 "Passport.RequestedInformation" = "REQUESTED INFORMATION";
@@ -4069,7 +4069,7 @@ Unused sets are archived when you add more.";
 "EmptyGroupInfo.Subtitle" = "Groups can have:";
 "EmptyGroupInfo.Line1" = "Up to %@ members";
 "EmptyGroupInfo.Line2" = "Persistent chat history";
-"EmptyGroupInfo.Line3" = "Public links such as o.impulsem.net/title";
+"EmptyGroupInfo.Line3" = "Public links such as {IMPULSEM_LINK_HOST}/title";
 "EmptyGroupInfo.Line4" = "Admins with different rights";
 
 "WallpaperPreview.Title" = "Background Preview";
@@ -5135,7 +5135,7 @@ Sorry for the inconvenience.";
 "AuthSessions.AddDevice.ScanTitle" = "Scan QR Code";
 "AuthSessions.AddDevice.InvalidQRCode" = "Invalid QR Code";
 "AuthSessions.AddDeviceIntro.Title" = "Log in by QR Code";
-"AuthSessions.AddDeviceIntro.Text1" = "Download ImpulseM on your computer from [desktop.impulsem.net]()";
+"AuthSessions.AddDeviceIntro.Text1" = "Download ImpulseM on your computer from [{IMPULSEM_SITE_URL}/dl]()";
 "AuthSessions.AddDeviceIntro.Text2" = "Run ImpulseM on your computer to get the QR code";
 "AuthSessions.AddDeviceIntro.Text3" = "Scan the QR code to connect your account";
 "AuthSessions.AddDeviceIntro.Action" = "Scan QR Code";
@@ -5463,11 +5463,11 @@ Sorry for the inconvenience.";
 "FeaturedStickers.OtherSection" = "OTHER STICKERS";
 
 "ChatList.GenericPsaAlert" = "This provides public service announcements in your chat list.";
-"ChatList.PsaAlert.covid" = "This message provides you with a public service announcement in relation to the undergoing pandemics. Learn more about this initiative at https://impulsem.net/blog/coronavirus";
+"ChatList.PsaAlert.covid" = "This message provides you with a public service announcement in relation to the undergoing pandemics.";
 "ChatList.GenericPsaLabel" = "PSA";
 "ChatList.PsaLabel.covid" = "Covid-19";
 "Chat.GenericPsaTooltip" = "This is a public service announcement";
-"Chat.PsaTooltip.covid" = "This message provides you with a public service announcement in relation to the undergoing pandemics. Learn more about this initiative at https://impulsem.net/blog/coronavirus";
+"Chat.PsaTooltip.covid" = "This message provides you with a public service announcement in relation to the undergoing pandemics.";
 
 "Message.GenericForwardedPsa" = "Public Service Announcement\nFrom: %@";
 "Message.ForwardedPsa.covid" = "Covid-19 Notification\nFrom: %@";
@@ -6961,9 +6961,9 @@ Sorry for the inconvenience.";
 
 "SponsoredMessageMenu.Info" = "What are sponsored\nmessages?";
 "SponsoredMessageInfoScreen.Title" = "What are sponsored messages?";
-"SponsoredMessageInfoScreen.MarkdownText" = "Unlike other apps, ImpulseM never uses your private data to target ads. [Learn more in the Privacy Policy](https://impulsem.net/privacy#5-6-no-ads-based-on-user-data)\nYou are seeing this message only because someone chose this public one-to many channel as a space to promote their messages. This means that no user data is mined or analyzed to display ads, and every user viewing a channel on ImpulseM sees the same sponsored message.\n\nUnline other apps, ImpulseM doesn't track whether you tapped on a sponsored message and doesn't profile you based on your activity. We also prevent external links in sponsored messages to ensure that third parties can't spy on our users. We believe that everyone has the right to privacy, and technological platforms should respect that.\n\nImpulseM offers free and unlimited service to hundreds of millions of users, which involves significant server and traffic costs. In order to remain independent and stay true to its values, ImpulseM developed a paid tool to promote messages with user privacy in mind. We welcome responsible adverticers at:\n[url]\nAds should no longer be synonymous with abuse of user privacy. Let us redefine how a tech compony should operate — together.";
+"SponsoredMessageInfoScreen.MarkdownText" = "Unlike other apps, ImpulseM never uses your private data to target ads. [Learn more in the Privacy Policy]({IMPULSEM_SITE_URL}/privacy#5-6-no-ads-based-on-user-data)\nYou are seeing this message only because someone chose this public one-to many channel as a space to promote their messages. This means that no user data is mined or analyzed to display ads, and every user viewing a channel on ImpulseM sees the same sponsored message.\n\nUnline other apps, ImpulseM doesn't track whether you tapped on a sponsored message and doesn't profile you based on your activity. We also prevent external links in sponsored messages to ensure that third parties can't spy on our users. We believe that everyone has the right to privacy, and technological platforms should respect that.\n\nImpulseM offers free and unlimited service to hundreds of millions of users, which involves significant server and traffic costs. In order to remain independent and stay true to its values, ImpulseM developed a paid tool to promote messages with user privacy in mind. We welcome responsible adverticers at:\n[url]\nAds should no longer be synonymous with abuse of user privacy. Let us redefine how a tech compony should operate — together.";
 "SponsoredMessageInfo.Action" = "Learn More";
-"SponsoredMessageInfo.Url" = "https://impulsem.net/ads";
+"SponsoredMessageInfo.Url" = "{IMPULSEM_SITE_URL}/ads";
 
 "Chat.NavigationNoChannels" = "You have no unread channels";
 
@@ -7259,7 +7259,7 @@ Sorry for the inconvenience.";
 
 "AuthSessions.HeaderInfo" = "Link [ImpulseM Desktop](desktop) or [ImpulseM Web](web) by scanning a QR code.";
 "AuthSessions.LinkDesktopDevice" = "Link Desktop Device";
-"AuthSessions.AddDevice.ScanInstallInfo" = "Go to [getdesktop.impulsem.net](desktop) or [web.impulsem.net](web) to get the QR code";
+"AuthSessions.AddDevice.ScanInstallInfo" = "Go to [{IMPULSEM_SITE_URL}/dl](desktop) or [{IMPULSEM_WEB_URL}](web) to get the QR code";
 
 "Channel.AdminLog.MessageSent" = "%@ sent message:";
 
@@ -7460,7 +7460,7 @@ Sorry for the inconvenience.";
 "Attachment.DeselectedItems_1" = "%@ item deselected";
 "Attachment.DeselectedItems_any" = "%@ items deselected";
 
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Users who have your number saved in their contacts will also see it on ImpulseM.\n\nThis public link opens a chat with you:\n[https://o.impulsem.net/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Users who have your number saved in their contacts will also see it on ImpulseM.\n\nThis public link opens a chat with you:\n[https://{IMPULSEM_LINK_HOST}/%@]()";
 
 "DownloadList.DownloadingHeader" = "Downloading";
 "DownloadList.DownloadedHeader" = "Recently Downloaded";
@@ -7801,8 +7801,8 @@ Sorry for the inconvenience.";
 "Conversation.CopyProtectionSavingDisabledSecret" = "Saving is restricted";
 "Conversation.CopyProtectionForwardingDisabledSecret" = "Forwarding is restricted";
 
-"Settings.Terms_URL" = "https://impulsem.net/tos";
-"Settings.PrivacyPolicy_URL" = "https://impulsem.net/privacy";
+"Settings.Terms_URL" = "{IMPULSEM_SITE_URL}/tos";
+"Settings.PrivacyPolicy_URL" = "{IMPULSEM_SITE_URL}/privacy";
 
 "Stickers.PremiumPackInfoText" = "This pack contains premium stickers like this one.";
 "Stickers.PremiumPackView" = "View";
@@ -7827,7 +7827,7 @@ Sorry for the inconvenience.";
 
 "Premium.Limits.GroupsAndChannelsInfo" = "Join up to 1000 channels and large groups";
 "Premium.Limits.PinnedChatsInfo" = "Pin up to 10 chats in your main chat list";
-"Premium.Limits.PublicLinksInfo" = "Reserve up to 20 [o.impulsem.net/name]() links";
+"Premium.Limits.PublicLinksInfo" = "Reserve up to 20 [{IMPULSEM_LINK_HOST}/name]() links";
 "Premium.Limits.SavedGifsInfo" = "Save up to 400 GIFs in your Favorite GIFs";
 "Premium.Limits.FavedStickersInfo" = "Save up to 10 stickers in your Favorite stickers";
 "Premium.Limits.BioInfo" = "Add more symbols and use links in your bio";
@@ -7919,7 +7919,7 @@ Sorry for the inconvenience.";
 "DeleteAccount.MessageHistoryTitle" = "Your Message History";
 "DeleteAccount.MessageHistoryText" = "Your chat partners will keep their message history with you, including the messages you shared in secret chats.\n\nYou can remove any messages for both sides at any time, but this will not be possible if you delete your account.";
 
-"DeleteAccount.DeleteMessagesURL" = "https://impulsem.net/faq#q-can-i-delete-my-messages";
+"DeleteAccount.DeleteMessagesURL" = "{IMPULSEM_SITE_URL}/faq#q-can-i-delete-my-messages";
 
 "DeleteAccount.EnterPhoneNumber" = "Enter Your Phone Number";
 "DeleteAccount.InvalidPhoneNumberError" = "Invalid phone number. Please try again.";
@@ -9250,7 +9250,7 @@ Sorry for the inconvenience.";
 "WebApp.LaunchMoreInfo" = "More about this bot";
 "WebApp.LaunchConfirmation" = "To launch this web app, you will connect to its website.";
 "WebApp.LaunchTermsConfirmation" = "By launching this mini app, you agree to the [Terms of Service for Mini Apps]().";
-"WebApp.LaunchTermsConfirmation_URL" = "https://impulsem.net/tos/mini-apps";
+"WebApp.LaunchTermsConfirmation_URL" = "{IMPULSEM_SITE_URL}/tos/mini-apps";
 "WebApp.LaunchOpenApp" = "Open App";
 
 "WallpaperPreview.PreviewInNightMode" = "Preview this wallpaper in night mode.";
@@ -9990,7 +9990,7 @@ Sorry for the inconvenience.";
 "WebApp.DisclaimerText" = "You are about to use a mini app operated by an independent party not affiliated with ImpulseM. You must agree to the Terms of Use of mini apps to continue.";
 "WebApp.DisclaimerAgree" = "I agree to the [Terms of Use]()";
 "WebApp.DisclaimerContinue" = "Continue";
-"WebApp.Disclaimer_URL" = "https://impulsem.net/tos/mini-apps";
+"WebApp.Disclaimer_URL" = "{IMPULSEM_SITE_URL}/tos/mini-apps";
 
 "WebApp.ShortcutsAdded" = "**%@** shortcut added in attachment menu.";
 "WebApp.ShortcutsSettingsAdded" = "**%@** shortcut added in attachment menu and Settings.";
@@ -11664,7 +11664,7 @@ Sorry for the inconvenience.";
 
 "ChatbotSetup.TitleItem" = "Chatbots";
 "ChatbotSetup.Text" = "Add a bot to your account to help you automatically process and respond to the messages you receive. [Learn More >]()";
-"ChatbotSetup.TextLink" = "https://impulsem.net";
+"ChatbotSetup.TextLink" = "{IMPULSEM_SITE_URL}";
 
 "ChatbotSetup.BotSearchPlaceholder" = "Bot Username";
 "ChatbotSetup.BotSectionFooter" = "Enter the username or URL of the ImpulseM bot that you want to automatically process your chats.";
@@ -11705,7 +11705,7 @@ Sorry for the inconvenience.";
 "ChannelBoost.EnableNoAdsLevelText" = "Your channel needs **Level %1$@** to switch off ads.";
 
 "WebApp.TermsOfUse" = "Terms of Use";
-"WebApp.TermsOfUse_URL" = "https://impulsem.net/tos/mini-apps";
+"WebApp.TermsOfUse_URL" = "{IMPULSEM_SITE_URL}/tos/mini-apps";
 
 "Privacy.Birthday" = "Date of Birth";
 "Privacy.Birthday.WhoCanSeeMyBio" = "WHO CAN SEE MY DATE OF BIRTH";
@@ -11767,7 +11767,7 @@ Sorry for the inconvenience.";
 "Monetization.Balance.AvailableInfo" = "You can collect your reward using Fragment, a third-party platform used by advertisers to pay for ads. [Learn More >]()";
 "Monetization.Balance.ComingLaterInfo" = "In the coming weeks, you will be able to collect rewards using Fragment, a third-party platform used by advertisers to pay for ads. [Learn More >]()";
 
-"Monetization.BalanceInfo_URL" = "https://impulsem.net";
+"Monetization.BalanceInfo_URL" = "{IMPULSEM_SITE_URL}";
 "Monetization.BalanceWithdraw" = "Withdraw via Fragment";
 "Monetization.TransactionsTitle" = "TRANSACTION HISTORY";
 
@@ -11823,7 +11823,7 @@ Sorry for the inconvenience.";
 
 "ReportAd.Title" = "Report Ad";
 "ReportAd.Help" = "Learn more about [ImpulseM Ad Policies and Guidelines]().";
-"ReportAd.Help_URL" = "https://ads.impulsem.net/guidelines";
+"ReportAd.Help_URL" = "";
 "ReportAd.Reported" = "We will review this ad to ensure it matches our [Ad Policies and Guidelines]().";
 "ReportAd.Hidden" = "You will no longer see ads from ImpulseM.";
 
@@ -11843,7 +11843,7 @@ Sorry for the inconvenience.";
 "AdsInfo.Launch.Title" = "Can I Launch an Ad?";
 "AdsInfo.Launch.Text" = "Anyone can create ads to display in this channel – with minimal budgets. Check out the ImpulseM Ad Platform for details. [Learn More >]()";
 "AdsInfo.Bot.Launch.Text" = "Anyone can create ads to display in this bot – with minimal budgets. Check out the ImpulseM Ad Platform for details. [Learn More >]()";
-"AdsInfo.Launch.Text_URL" = "https://promote.impulsem.net";
+"AdsInfo.Launch.Text_URL" = "";
 
 "AdsInfo.Understood" = "Understood";
 
@@ -11915,9 +11915,9 @@ Sorry for the inconvenience.";
 "Business.Links.CreateAction" = "Create a Link to Chat";
 "Business.Links.LinksSectionHeader" = "LINKS TO CHAT";
 
-"Business.Links.SimpleLinkInfoUsernamePhone" = "You can also use a simple link for a chat with you — [o.impulsem.net/%1$@](username) or [o.impulsem.net/\\u{2060}+\\u{2060}%2$@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "You can also use a simple link for a chat with you — [o.impulsem.net/%@](username).";
-"Business.Links.SimpleLinkInfoPhone" = "You can also use a simple link for a chat with you — [o.impulsem.net/\\u{2060}+\\u{2060}%@](phone).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "You can also use a simple link for a chat with you — [{IMPULSEM_LINK_HOST}/%1$@](username) or [{IMPULSEM_LINK_HOST}/\\u{2060}+\\u{2060}%2$@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "You can also use a simple link for a chat with you — [{IMPULSEM_LINK_HOST}/%@](username).";
+"Business.Links.SimpleLinkInfoPhone" = "You can also use a simple link for a chat with you — [{IMPULSEM_LINK_HOST}/\\u{2060}+\\u{2060}%@](phone).";
 
 "Business.Links.LinkNameTitle" = "Link Name";
 "Business.Links.LinkNameText" = "Add a name for this link that only you will see.";
@@ -11983,7 +11983,7 @@ Sorry for the inconvenience.";
 "Business.AdsTitle" = "ADS IN CHANNELS";
 "Business.DontHideAds" = "Do Not Hide Ads";
 "Business.AdsInfo" = "As a Premium subscriber, you don't see any ads on ImpulseM, but you can turn them on, for example, to view your own ads that you launched on the [ImpulseM Ad Platform >]()";
-"Business.AdsInfo_URL" = "https://promote.impulsem.net";
+"Business.AdsInfo_URL" = "";
 
 "ChatList.PremiumGraceTitle" = "⚠️ Don't lose access to ImpulseM Premium!";
 "ChatList.PremiumGraceText" = "Your exclusive benefits are about to expire.";
@@ -12370,7 +12370,7 @@ Sorry for the inconvenience.";
 "Stars.Purchase.Stars_any" = "%@ Stars";
 "Stars.Purchase.ShowMore" = "Show More Options";
 "Stars.Purchase.Info" = "By proceeding and purchasing Stars, you agree with [Terms and Conditions]().";
-"Stars.Purchase.Terms_URL" = "https://impulsem.net/tos";
+"Stars.Purchase.Terms_URL" = "{IMPULSEM_SITE_URL}/tos";
 
 "Stars.Transaction.Via" = "Via";
 "Stars.Transaction.To" = "To";
@@ -12379,7 +12379,7 @@ Sorry for the inconvenience.";
 "Stars.Transaction.Id" = "Transaction ID";
 "Stars.Transaction.Date" = "Date";
 "Stars.Transaction.Terms" = "Review the [Terms of Service]() for Stars.";
-"Stars.Transaction.Terms_URL" = "https://impulsem.net/tos";
+"Stars.Transaction.Terms_URL" = "{IMPULSEM_SITE_URL}/tos";
 "Stars.Transaction.CopiedId" = "Transaction ID copied to clipboard.";
 
 "Stars.Transaction.MediaPurchase" = "Media Purchase";
@@ -12477,7 +12477,7 @@ Sorry for the inconvenience.";
 "Stars.BotRevenue.Withdraw.WithdrawShort" = "Withdraw";
 "Stars.BotRevenue.Withdraw.BuyAds" = "Buy Ads";
 "Stars.BotRevenue.Withdraw.Info" = "You can collect rewards for Stars using Fragment, or use Stars to advertise your bot. [Learn More >]()";
-"Stars.BotRevenue.Withdraw.Info_URL" = "https://impulsem.net/tos/bot-developers#6-2-2-tpa-balance";
+"Stars.BotRevenue.Withdraw.Info_URL" = "{IMPULSEM_SITE_URL}/tos/bot-developers#6-2-2-tpa-balance";
 
 "Stars.BotRevenue.Transactions.Title" = "Transaction History";
 
@@ -12496,7 +12496,7 @@ Sorry for the inconvenience.";
 "Stars.PaidContent.AmountTitle" = "ENTER UNLOCK COST";
 "Stars.PaidContent.AmountPlaceholder" = "Stars to Unlock";
 "Stars.PaidContent.AmountInfo" = "Users will have to transfer this amount of Stars to your channel in order to view this media.\n[More about Stars >]()";
-"Stars.PaidContent.AmountInfo_URL" = "https://impulsem.net/tos/stars";
+"Stars.PaidContent.AmountInfo_URL" = "{IMPULSEM_SITE_URL}/tos/stars";
 "Stars.PaidContent.Create" = "Make This Media Paid";
 
 "MediaEditor.AddLink" = "LINK";
@@ -12535,7 +12535,7 @@ Sorry for the inconvenience.";
 "Monetization.BalanceStarsWithdrawShort" = "Withdraw";
 "Monetization.BalanceStarsBuyAds" = "Buy Ads";
 "Monetization.Balance.StarsInfo" = "You can collect rewards for Stars using Fragment, or use Stars to advertise your channel. [Learn More >]()";
-"Monetization.Balance.StarsInfo_URL" = "https://impulsem.net";
+"Monetization.Balance.StarsInfo_URL" = "{IMPULSEM_SITE_URL}";
 
 "Monetization.StarsProceeds.Title" = "Rewards Overview";
 "Monetization.StarsProceeds.Available" = "Available Balance";
@@ -12713,8 +12713,8 @@ Sorry for the inconvenience.";
 
 "PeerInfo.PaneBotPreviews" = "Preview";
 "PeerInfo.OpenAppButton" = "Open App";
-"PeerInfo.AppFooterAdmin" = "By publishing this mini app, you agree to the [ImpulseM Terms of Service for Developers](https://impulsem.net/privacy).";
-"PeerInfo.AppFooter" = "By launching this mini app, you agree to the [Terms of Service for Mini Apps](https://impulsem.net/privacy).";
+"PeerInfo.AppFooterAdmin" = "By publishing this mini app, you agree to the [ImpulseM Terms of Service for Developers]({IMPULSEM_SITE_URL}/privacy).";
+"PeerInfo.AppFooter" = "By launching this mini app, you agree to the [Terms of Service for Mini Apps]({IMPULSEM_SITE_URL}/privacy).";
 "BotPreviews.MenuAddPreview" = "Add Preview";
 "BotPreviews.MenuReorder" = "Reorder";
 "BotPreviews.MenuDeleteLanguage" = "Delete %@";
@@ -12774,7 +12774,7 @@ Sorry for the inconvenience.";
 "InviteLink.ShareShort" = "Share";
 
 "Stars.Subscription.Terms" = "By subscribing you agree to the [Terms of Service]().";
-"Stars.Subscription.Terms_URL" = "https://impulsem.net/tos/stars";
+"Stars.Subscription.Terms_URL" = "{IMPULSEM_SITE_URL}/tos/stars";
 
 "Stars.Transaction.Reaction.Title" = "Star reaction";
 "Stars.Transaction.Reaction.Post" = "Post";
@@ -12859,7 +12859,7 @@ Sorry for the inconvenience.";
 "InviteLink.Create.FeeEditInfo" = "If you need to change the subscription fee, create a new invite link with a different price.";
 "InviteLink.Create.RequestApprovalFeeUnavailable" = "You can't enable admin approval for links that require a monthly fee.";
 
-"WebApp.PrivacyPolicy_URL" = "https://impulsem.net/privacy-tpa";
+"WebApp.PrivacyPolicy_URL" = "{IMPULSEM_SITE_URL}/privacy-tpa";
 
 "ChatList.SubscriptionsLowBalance.Stars_1" = "%@ Star needed";
 "ChatList.SubscriptionsLowBalance.Stars_any" = "%@ Stars needed";
@@ -12885,10 +12885,10 @@ Sorry for the inconvenience.";
 "SendStarReactions.SectionTop" = "Top Senders";
 "SendStarReactions.ShowMyselfInTop" = "Show me in Top Senders";
 "SendStarReactions.SendButtonTitle" = "Send  # %@";
-"SendStarReactions.TermsOfServiceFooter" = "By sending Stars you agree to the [Terms of Service](https://impulsem.net/tos/stars)";
+"SendStarReactions.TermsOfServiceFooter" = "By sending Stars you agree to the [Terms of Service]({IMPULSEM_SITE_URL}/tos/stars)";
 
 "PeerInfo.AllowedReactions.StarReactions" = "Enable Paid Reactions";
-"PeerInfo.AllowedReactions.StarReactionsFooter" = "Switch this on to let your subscribers set paid reactions with ImpulseM Stars, which you will be able to withdraw later as GRAM. [Learn More >](https://impulsem.net/privacy)";
+"PeerInfo.AllowedReactions.StarReactionsFooter" = "Switch this on to let your subscribers set paid reactions with ImpulseM Stars, which you will be able to withdraw later as GRAM. [Learn More >]({IMPULSEM_SITE_URL}/privacy)";
 
 "Chat.ToastStarsSent.Title_1" = "Star sent!";
 "Chat.ToastStarsSent.Title_any" = "Stars sent!";
@@ -13204,7 +13204,7 @@ Sorry for the inconvenience.";
 "ChatList.Search.TopAppsInfo" = "Which apps are included here? [Learn >]()";
 
 "TopApps.Info.Title" = "Top Mini Apps";
-"TopApps.Info.Text" = "This catalogue ranks mini apps based on their daily revenue, measured in Stars. To be listed, developers must set their main mini app in [@botfather]() (as described [here](https://core.impulsem.net/bots/webapps#launching-the-main-mini-app)), have over **1,000** daily users, and earn a daily revenue above **1,000** Stars, based on weekly average.";
+"TopApps.Info.Text" = "This catalogue ranks mini apps based on their daily revenue, measured in Stars. To be listed, developers must set their main mini app in [@botfather]() (as described here), have over **1,000** daily users, and earn a daily revenue above **1,000** Stars, based on weekly average.";
 "TopApps.Info.Done" = "Understood";
 
 "Stars.Intro.Transaction.TelegramBotApi.Title" = "Paid Broadcast";
@@ -13407,7 +13407,7 @@ Sorry for the inconvenience.";
 "AffiliateSetup.StartTitle" = "Start Affiliate Program";
 "AffiliateSetup.UpdateTitle" = "Update Affiliate Program";
 
-"AffiliateSetup.TermsFooter" = "By creating an affiliate program, you afree to the [terms and conditions](https://impulsem.net/terms) of Affiliate Programs.";
+"AffiliateSetup.TermsFooter" = "By creating an affiliate program, you afree to the [terms and conditions]({IMPULSEM_SITE_URL}/terms) of Affiliate Programs.";
 
 "AffiliateSetup.ProgramMenu.OpenBot" = "Open Bot";
 "AffiliateSetup.ProgramMenu.OpenApp" = "Open App";
@@ -13460,7 +13460,7 @@ Sorry for the inconvenience.";
 "AffiliateProgram.PeerTypeSelf" = "personal account";
 
 "AffiliateProgram.JoinTitle" = "Affiliate Program";
-"AffiliateProgram.JoinTerms" = "By joining this program, you afree to the [terms and conditions](https://impulsem.net/terms) of Affiliate Programs.";
+"AffiliateProgram.JoinTerms" = "By joining this program, you afree to the [terms and conditions]({IMPULSEM_SITE_URL}/terms) of Affiliate Programs.";
 "AffiliateProgram.DailyRevenueText" = "The average daily revenue per user: #**%@**";
 
 "AffiliateProgram.LinkTitle" = "Referral Link";
@@ -13860,7 +13860,7 @@ Sorry for the inconvenience.";
 "Gift.Convert.Success.ChannelText.Stars_any" = "%@ Stars";
 
 "Stars.Transfer.Terms" = "By purchasing you agree to the [Terms of Service]().";
-"Stars.Transfer.Terms_URL" = "https://impulsem.net/tos/stars";
+"Stars.Transfer.Terms_URL" = "{IMPULSEM_SITE_URL}/tos/stars";
 
 "AvatarEditor.PremiumNeeded.Background" = "Subscribe to ImpulseM Premium to choose this background.";
 "AvatarEditor.PremiumNeeded.Emoji" = "Subscribe to ImpulseM Premium to choose this emoji.";
@@ -13906,7 +13906,7 @@ Sorry for the inconvenience.";
 "Notification.PaidMessageYouMany" = "You paid %1$@ to send %2$@";
 
 "Stars.Transfer.Terms" = "By purchasing you agree to the [Terms of Service]().";
-"Stars.Transfer.Terms_URL" = "https://impulsem.net/tos/stars";
+"Stars.Transfer.Terms_URL" = "{IMPULSEM_SITE_URL}/tos/stars";
 
 "StarsTransaction.Commission" = "Commission";
 
@@ -14353,7 +14353,7 @@ Sorry for the inconvenience.";
 "Premium.CreateMultipleStories" = "Create Multiple Stories";
 
 "FrozenAccount.Violation.TextNew" = "Your account was frozen for breaking ImpulseM's [Terms and Conditions]().";
-"FrozenAccount.Violation.TextNew_URL" = "https://impulsem.net/tos";
+"FrozenAccount.Violation.TextNew_URL" = "{IMPULSEM_SITE_URL}/tos";
 
 "Stars.Purchase.BuyStarGiftInfo" = "Buy Stars to acquire a unique collectible.";
 
@@ -15013,7 +15013,7 @@ Sorry for the inconvenience.";
 
 "Ton.WithdrawViaFragment" = "Withdraw via Fragment";
 "Ton.WithdrawViaFragment.Info" = "Collect your GRAM using Fragment. [Learn More >]()";
-"Ton.WithdrawViaFragment.Info_URL" = "https://impulsem.net/tos/bot-developers#6-2-2-tpa-balance";
+"Ton.WithdrawViaFragment.Info_URL" = "{IMPULSEM_SITE_URL}/tos/bot-developers#6-2-2-tpa-balance";
 
 "MESSAGE_GIFT_THEME" = "%1$@ changed theme to %2$@";
 
@@ -15700,7 +15700,7 @@ Error: %8$@";
 "CocoonInfo.Efficient.Text" = "Cocoon has allowed ImpulseM to reduce translation costs by 6x.";
 "CocoonInfo.ForEveryone.Title" = "For Everyone";
 "CocoonInfo.ForEveryone.Text" = "Any developer can use Cocoon for AI features. Learn more at [@cocoon](telegram) or [cocoon.org](web).";
-"CocoonInfo.IntergrateInfo" = "Want to integrate Cocoon into your projects?\nReach out at [o.impulsem.net/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Want to integrate Cocoon into your projects?\nReach out at [{IMPULSEM_LINK_HOST}/cocoon?direct]()";
 "CocoonInfo.Understood" = "Understood";
 
 "Conversation.Translation.CocoonInfo" = "Translations are powered by\n**#Cocoon**. [How does it work?]()";
@@ -16404,7 +16404,7 @@ Error: %8$@";
 "ChatList.RemoveFolderConfirmationTitle" = "Remove %@?";
 
 "SocksProxySetup.QrCode.TgLink" = "tg:// link";
-"SocksProxySetup.QrCode.TMeLink" = "o.impulsem.net link";
+"SocksProxySetup.QrCode.TMeLink" = "{IMPULSEM_LINK_HOST} link";
 
 "WebBrowser.OpenLinksInfo" = "Open links inside ImpulseM instead of your default browser for more privacy.";
 "WebBrowser.Exceptions.OpenInApp" = "OPEN IN-APP";
@@ -16848,7 +16848,7 @@ Error: %8$@";
 "Wallet.GotIt" = "Got it";
 "Wallet.Send" = "Send";
 "Wallet.TermsText" = "By using this service, you agree to the [Terms]().";
-"Wallet.TermsText_URL" = "https://impulsem.net/tos";
+"Wallet.TermsText_URL" = "{IMPULSEM_SITE_URL}/tos";
 "Wallet.Recipient.Error" = "An unknown error occurred. Please try again later.";
 "Wallet.Recipient.InvalidAddress" = "The pasted text is not a valid TON address.";
 "Wallet.Recipient.ScanQR" = "Find a QR code that contains a wallet address";

@@ -94,6 +94,15 @@ jobs:
           restore-keys: |
             ios-bazel-disk-${{ hashFiles('versions.json') }}-debug_sim_arm64-
 
+      - name: Check the transport URL
+        env:
+          IMPULSEM_RPC_URL: ${{ vars.IMPULSEM_RPC_URL }}
+        run: |
+          if [ -z "$IMPULSEM_RPC_URL" ]; then
+            echo "::error::The IMPULSEM_RPC_URL organisation variable is empty. A simulator build needs the transport base URL."
+            exit 1
+          fi
+
       - name: Write owner service settings into the configuration
         env:
           IMPULSEM_RPC_URL: ${{ vars.IMPULSEM_RPC_URL }}

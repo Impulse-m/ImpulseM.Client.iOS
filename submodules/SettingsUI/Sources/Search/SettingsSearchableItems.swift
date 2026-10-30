@@ -4195,25 +4195,27 @@ private func helpSearchableItems(context: AccountContext) -> [SettingsSearchable
         )
     )
     
-    items.append(
-        SettingsSearchableItem(
-            id: "faq",
-            title: strings.Settings_FAQ,
-            alternate: synonyms(strings.SettingsSearch_Synonyms_FAQ),
-            icon: .faq,
-            breadcrumbs: [],
-            present: { context, navigationController, present in
-                let _ = (cachedFaqInstantPage(context: context)
-                |> take(1)
-                |> deliverOnMainQueue).start(next: { resolvedUrl in
-                    context.sharedContext.openResolvedUrl(resolvedUrl, context: context, urlContext: .generic, navigationController: navigationController, forceExternal: false, forceUpdate: false, openPeer: { peer, navigation in
-                    }, sendFile: nil, sendSticker: nil, sendEmoji: nil, requestMessageActionUrlAuth: nil, joinVoiceChat: nil, present: { controller, arguments in
-                        present(.push, controller)
-                    }, dismissInput: {}, contentContext: nil, progress: nil, completion: nil)
-                })
-            }
+    if !strings.Settings_FAQ_URL.isEmpty {
+        items.append(
+            SettingsSearchableItem(
+                id: "faq",
+                title: strings.Settings_FAQ,
+                alternate: synonyms(strings.SettingsSearch_Synonyms_FAQ),
+                icon: .faq,
+                breadcrumbs: [],
+                present: { context, navigationController, present in
+                    let _ = (cachedFaqInstantPage(context: context)
+                    |> take(1)
+                    |> deliverOnMainQueue).start(next: { resolvedUrl in
+                        context.sharedContext.openResolvedUrl(resolvedUrl, context: context, urlContext: .generic, navigationController: navigationController, forceExternal: false, forceUpdate: false, openPeer: { peer, navigation in
+                        }, sendFile: nil, sendSticker: nil, sendEmoji: nil, requestMessageActionUrlAuth: nil, joinVoiceChat: nil, present: { controller, arguments in
+                            present(.push, controller)
+                        }, dismissInput: {}, contentContext: nil, progress: nil, completion: nil)
+                    })
+                }
+            )
         )
-    )
+    }
     
     items.append(
         SettingsSearchableItem(
@@ -4243,25 +4245,27 @@ private func helpSearchableItems(context: AccountContext) -> [SettingsSearchable
         )
     )
     
-    items.append(
-        SettingsSearchableItem(
-            id: "privacy-policy",
-            title: strings.Permissions_PrivacyPolicy,
-            alternate: [],
-            icon: .tips,
-            breadcrumbs: [],
-            present: { context, navigationController, present in
-                let _ = (cachedPrivacyPage(context: context)
-                |> take(1)
-                |> deliverOnMainQueue).start(next: { resolvedUrl in
-                    context.sharedContext.openResolvedUrl(resolvedUrl, context: context, urlContext: .generic, navigationController: navigationController, forceExternal: false, forceUpdate: false, openPeer: { peer, navigation in
-                    }, sendFile: nil, sendSticker: nil, sendEmoji: nil, requestMessageActionUrlAuth: nil, joinVoiceChat: nil, present: { c, arguments in
-                        present(.push, c)
-                    }, dismissInput: {}, contentContext: nil, progress: nil, completion: nil)
-                })
-            }
+    if !strings.Settings_PrivacyPolicy_URL.isEmpty {
+        items.append(
+            SettingsSearchableItem(
+                id: "privacy-policy",
+                title: strings.Permissions_PrivacyPolicy,
+                alternate: [],
+                icon: .tips,
+                breadcrumbs: [],
+                present: { context, navigationController, present in
+                    let _ = (cachedPrivacyPage(context: context)
+                    |> take(1)
+                    |> deliverOnMainQueue).start(next: { resolvedUrl in
+                        context.sharedContext.openResolvedUrl(resolvedUrl, context: context, urlContext: .generic, navigationController: navigationController, forceExternal: false, forceUpdate: false, openPeer: { peer, navigation in
+                        }, sendFile: nil, sendSticker: nil, sendEmoji: nil, requestMessageActionUrlAuth: nil, joinVoiceChat: nil, present: { c, arguments in
+                            present(.push, c)
+                        }, dismissInput: {}, contentContext: nil, progress: nil, completion: nil)
+                    })
+                }
+            )
         )
-    )
+    }
     
     return items
 }

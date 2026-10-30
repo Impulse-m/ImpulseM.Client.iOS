@@ -220,6 +220,80 @@ def sanitize_entry_identifer(string: str) -> str:
     return string.replace('.', '_')
 
 
+IMPULSEM_TOKEN_NAMES: List[str] = ['IMPULSEM_SITE_URL', 'IMPULSEM_LINK_HOST', 'IMPULSEM_WEB_URL']
+
+IMPULSEM_MARKDOWN_LINK: re.Pattern = re.compile(r'\[([^\]\n]*)\]\(([^)\n]*)\)')
+
+IMPULSEM_STRING_VALUE: re.Pattern = re.compile(r'("(?:[^"\\]|\\.)*"\s*=\s*")((?:[^"\\]|\\.)*)(";)')
+
+
+def normalize_impulsem_base_url(value: str) -> str:
+    result: str = value.strip()
+    while result.endswith('/'):
+        result = result[:-1]
+    return result
+
+
+def normalize_impulsem_link_host(value: str) -> str:
+    result: str = value.strip().lower()
+    for scheme in ['https://', 'http://']:
+        if result.startswith(scheme):
+            result = result[len(scheme):]
+            break
+    while result.endswith('/'):
+        result = result[:-1]
+    return result
+
+
+def make_impulsem_token_values(site_url: str, link_host: str, web_url: str) -> Dict[str, str]:
+    return {
+        'IMPULSEM_SITE_URL': normalize_impulsem_base_url(site_url),
+        'IMPULSEM_LINK_HOST': normalize_impulsem_link_host(link_host),
+        'IMPULSEM_WEB_URL': normalize_impulsem_base_url(web_url),
+    }
+
+
+def remove_empty_impulsem_tokens(value: str, empty_tokens: List[str]) -> str:
+    # A markdown link that points at an empty token keeps its label only.
+    value = IMPULSEM_MARKDOWN_LINK.sub(
+        lambda match: match.group(1) if any(token in match.group(0) for token in empty_tokens) else match.group(0),
+        value
+    )
+    # A host-bearing fragment (optional scheme, the token, then the path) is removed.
+    alternatives: str = '|'.join(re.escape(token) for token in empty_tokens)
+    fragment: re.Pattern = re.compile(r'(?:https?://)?(?:' + alternatives + r')[^\s\[\]()"<>\\]*')
+    value = fragment.sub('', value)
+    # Brackets left empty by the removal go too, then the gaps are closed.
+    value = re.sub(r'\[(?:\s|\\[nr])*\]', '', value)
+    value = re.sub(r'[ \t]{2,}', ' ', value)
+    return value.strip(' \t')
+
+
+def substitute_impulsem_tokens(value: str, token_values: Dict[str, str]) -> str:
+    if not any(('{' + name + '}') in value for name in IMPULSEM_TOKEN_NAMES):
+        return value
+    empty_tokens: List[str] = [('{' + name + '}') for name in IMPULSEM_TOKEN_NAMES if not token_values.get(name)]
+    if empty_tokens:
+        value = remove_empty_impulsem_tokens(value, empty_tokens)
+    for name in IMPULSEM_TOKEN_NAMES:
+        value = value.replace('{' + name + '}', token_values.get(name) or '')
+    return value
+
+
+def substitute_impulsem_strings(content: str, token_values: Dict[str, str]) -> str:
+    return IMPULSEM_STRING_VALUE.sub(
+        lambda match: match.group(1) + substitute_impulsem_tokens(match.group(2), token_values) + match.group(3),
+        content
+    )
+
+
+def write_substituted_strings(source_path: str, output_path: str, token_values: Dict[str, str]):
+    with open(source_path, 'rb') as source_file:
+        content: str = source_file.read().decode('utf-8')
+    with open(output_path, 'wb') as output_file:
+        output_file.write(substitute_impulsem_strings(content, token_values).encode('utf-8'))
+
+
 def generate(header_path: str, implementation_path: str, data_path: str, entries: [Entry]):
     print('Generating strings into:\n{}\n{}'.format(header_path, implementation_path))
     with open(header_path, 'wb') as header_file, open(implementation_path, 'wb') as source_file,\
@@ -683,21 +757,48 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--outImplementation',
-        required=True,
+        required=False,
         help='Path to PresentationStrings.m',
         metavar='path'
     )
     parser.add_argument(
         '--outHeader',
-        required=True,
+        required=False,
         help='Path to PresentationStrings.h',
         metavar='path'
     )
     parser.add_argument(
         '--outData',
-        required=True,
+        required=False,
         help='Path to PresentationStrings.data',
         metavar='path'
+    )
+    parser.add_argument(
+        '--outSubstituted',
+        required=False,
+        help='Path to write the source strings with the IMPULSEM_* tokens replaced (no generation in this mode)',
+        metavar='path'
+    )
+    parser.add_argument(
+        '--siteUrl',
+        required=False,
+        default='',
+        help='IMPULSEM_SITE_URL value, empty when the build has no website',
+        metavar='url'
+    )
+    parser.add_argument(
+        '--linkHost',
+        required=False,
+        default='',
+        help='IMPULSEM_LINK_HOST value, empty when the build has no share host',
+        metavar='host'
+    )
+    parser.add_argument(
+        '--webUrl',
+        required=False,
+        default='',
+        help='IMPULSEM_WEB_URL value, empty when the build has no web client',
+        metavar='url'
     )
 
     if len(sys.argv) < 2:
@@ -706,7 +807,14 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    parsed_strings = parse_strings(args.source)
-    all_entries = parse_entries(parsed_strings)
-    generate(header_path=args.outHeader, implementation_path=args.outImplementation, data_path=args.outData,
-             entries=all_entries)
+    if args.outSubstituted is not None:
+        token_values: Dict[str, str] = make_impulsem_token_values(site_url=args.siteUrl, link_host=args.linkHost, web_url=args.webUrl)
+        write_substituted_strings(source_path=args.source, output_path=args.outSubstituted, token_values=token_values)
+    else:
+        if args.outImplementation is None or args.outHeader is None or args.outData is None:
+            parser.error('--outImplementation, --outHeader and --outData are required unless --outSubstituted is given')
+
+        parsed_strings = parse_strings(args.source)
+        all_entries = parse_entries(parsed_strings)
+        generate(header_path=args.outHeader, implementation_path=args.outImplementation, data_path=args.outData,
+                 entries=all_entries)

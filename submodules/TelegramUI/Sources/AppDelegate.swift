@@ -53,6 +53,7 @@ import WalletContext
 import WalletSendScreen
 import PasscodeCore
 import LiquidGlassShapes
+import ImpulseBuildSettings
 import ImpulseNetworkEngine
 import ImpulseFeatures
 
@@ -687,7 +688,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             useBetaFeatures: !buildConfig.isAppStoreBuild,
             isICloudEnabled: buildConfig.isICloudEnabled,
             // The ImpulseM network engine serves the app and its app extensions alike.
-            networkEngineFactory: ImpulseNetworkEngineFactory(baseUrl: buildConfig.impulsemRpcUrl)
+            networkEngineFactory: ImpulseNetworkEngineFactory(baseUrl: ImpulseBuildSettings.rpcUrl)
         )
 
         guard let appGroupUrl = maybeAppGroupUrl else {

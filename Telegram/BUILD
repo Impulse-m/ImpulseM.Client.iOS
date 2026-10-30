@@ -58,6 +58,9 @@ load(
     "telegram_team_id",
     "telegram_enable_icloud",
     "telegram_enable_siri",
+    "telegram_impulsem_site_url",
+    "telegram_impulsem_link_host",
+    "telegram_impulsem_web_url",
 )
 
 load("@build_bazel_rules_apple//apple:resources.bzl",
@@ -146,11 +149,11 @@ genrule(
     name = "GeneratedPresentationStrings",
     srcs = [
         "//build-system:GenerateStrings/GenerateStrings.py",
-        "Telegram-iOS/en.lproj/Localizable.strings",
+        "en.lproj/Localizable.strings",
     ],
     cmd = '''
         python3 $(location //build-system:GenerateStrings/GenerateStrings.py) \\
-            --source=$(location Telegram-iOS/en.lproj/Localizable.strings) \\
+            --source=$(location en.lproj/Localizable.strings) \\
             --outImplementation=$(location GeneratedPresentationStrings/Sources/PresentationStrings.m) \\
             --outHeader=$(location GeneratedPresentationStrings/PublicHeaders/PresentationStrings/PresentationStrings.h) \\
             --outData=$(location GeneratedPresentationStrings/Resources/PresentationStrings.data) \\
@@ -164,6 +167,29 @@ genrule(
     # initWithPrimaryComponent:…]` asserts when it cannot load it, so a standalone app that builds
     # a PresentationData dies at launch without it.
     visibility = ["//Tests:__subpackages__"],
+)
+
+# The English source with the IMPULSEM_* tokens replaced by the configured owner service addresses. The app bundles this
+# output instead of the source, so the bundled strings and the generated fallback read the same substituted values.
+genrule(
+    name = "EnglishLocalizableStrings",
+    srcs = [
+        "//build-system:GenerateStrings/GenerateStrings.py",
+        "Telegram-iOS/en.lproj/Localizable.strings",
+    ],
+    cmd = '''
+        python3 $(location //build-system:GenerateStrings/GenerateStrings.py) \\
+            --source=$(location Telegram-iOS/en.lproj/Localizable.strings) \\
+            --outSubstituted=$(location en.lproj/Localizable.strings) \\
+            --siteUrl='{site_url}' \\
+            --linkHost='{link_host}' \\
+            --webUrl='{web_url}'
+    '''.format(
+        site_url = telegram_impulsem_site_url,
+        link_host = telegram_impulsem_link_host,
+        web_url = telegram_impulsem_web_url,
+    ),
+    outs = ["en.lproj/Localizable.strings"],
 )
 
 minimum_os_version = "15.0"
@@ -274,7 +300,7 @@ filegroup(
 filegroup(
     name = "AppStringResources",
     srcs = [
-        "Telegram-iOS/en.lproj/Localizable.strings",
+        "en.lproj/Localizable.strings",
     ] + [
         "{}.lproj/Localizable.strings".format(language) for language in empty_languages
     ],
@@ -2157,7 +2183,7 @@ filegroup(
     testonly = True,
     srcs = [
         ":GeneratedPresentationStrings/Resources/PresentationStrings.data",
-        "Telegram-iOS/en.lproj/Localizable.strings",
+        "en.lproj/Localizable.strings",
     ],
     visibility = ["//submodules/ChatListUI:__pkg__"],
 )

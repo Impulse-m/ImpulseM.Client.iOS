@@ -5,6 +5,8 @@ import BuildConfig
 /// (impulsem-configuration.json, passed through BuildConfig). Every empty value reads as nil,
 /// and every consumer must handle nil by hiding the feature instead of building a link.
 public enum ImpulseBuildSettings {
+    // The initialiser only stores the bundle id for bundleData(withAppToken:); it touches no keychain and no
+    // other state, and the four IMPULSEM_* getters read compile-time macros, so the empty id has no effect here.
     private static let buildConfig: BuildConfig = BuildConfig(baseAppBundleId: "")
 
     /// Transport base URL (IMPULSEM_RPC_URL) without a trailing slash, nil when not configured.

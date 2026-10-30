@@ -22,6 +22,7 @@ import ConvertOpusToAAC
 import CoreServices
 import ImageIO
 import UniformTypeIdentifiers
+import ImpulseBuildSettings
 import ImpulseNetworkEngine
 
 private let queue = Queue()
@@ -857,7 +858,7 @@ private final class NotificationServiceHandler {
             deviceModelName: nil,
             useBetaFeatures: !buildConfig.isAppStoreBuild,
             isICloudEnabled: false,
-            networkEngineFactory: ImpulseNetworkEngineFactory(baseUrl: buildConfig.impulsemRpcUrl)
+            networkEngineFactory: ImpulseNetworkEngineFactory(baseUrl: ImpulseBuildSettings.rpcUrl)
         )
         
         let isLockedMessage: String?

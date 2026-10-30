@@ -12,6 +12,7 @@ swift_library(
         "//submodules/Postbox:Postbox",
         "//submodules/TelegramCore:TelegramCore",
         "//submodules/ImpulseNetworkEngine:ImpulseNetworkEngine",
+        "//submodules/ImpulseBuildSettings:ImpulseBuildSettings",
         "//submodules/BuildConfig:BuildConfig",
         "//submodules/MtProtoKit:MtProtoKit",
         "//submodules/SSignalKit/SwiftSignalKit:SwiftSignalKit",
