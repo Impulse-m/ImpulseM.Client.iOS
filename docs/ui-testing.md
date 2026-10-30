@@ -17,7 +17,7 @@ Tests launch the app with the `--ui-test` argument. When the app detects this fl
 
 - It uses an isolated data directory (`telegram-ui-tests-data/` inside the app group container), completely separate from production data.
 - That directory is wiped on every launch, so each test run starts with a clean slate.
-- The app connects to Telegram **test servers** (not production). Test server accounts are independent of production accounts.
+- The app connects to the **test servers** (not production). Test server accounts are independent of production accounts.
 
 This means every test begins with the app in its first-launch state: no accounts, no data, showing the welcome/auth screen.
 
@@ -92,9 +92,9 @@ field.typeText("9996621234")
 2. The file is automatically picked up by the `iOSAppUITestSuite` target via the Bazel build — no manual target membership changes needed.
 3. Run with the same `xcodebuild test` command.
 
-## Telegram Test Servers
+## Test Servers
 
-The test environment uses 3 separate Telegram datacenters, completely independent from production.
+The test environment uses 3 separate datacenters, completely independent from production.
 
 ### OS Environment
 

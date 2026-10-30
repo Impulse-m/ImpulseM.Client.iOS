@@ -1,6 +1,6 @@
 # Contributing
 
-This document describes how you can contribute to Telegram-iOS. Please read it carefully.
+This document describes how you can contribute to ImpulseM for iOS. Please read it carefully.
 
 **Table of Contents**
 
@@ -17,16 +17,14 @@ This document describes how you can contribute to Telegram-iOS. Please read it c
 
 ## What contributions are accepted
 
-We highly appreciate your contributions in the matter of fixing bugs and optimizing the Telegram-iOS source code and its documentation. In case of fixing the existing user experience please push to your fork and [submit a pull request][pr].
+We highly appreciate your contributions in the matter of fixing bugs and optimizing the ImpulseM for iOS source code and its documentation. In case of fixing the existing user experience please push to your fork and [submit a pull request][pr].
 
 Wait for us. We try to review your pull requests as fast as possible.
 If we find issues with your pull request, we may suggest some changes and improvements.
 
 Unfortunately we **do not merge** any pull requests that have new feature implementations, translations to new languages and those which introduce any new user interface elements.
 
-If you have a translations-related contribution, check out [Translations platform][translate].
-
-Telegram-iOS is not a standalone application but a part of [Telegram project][telegram], so all the decisions about the features, languages, user experience, user interface and the design are made inside Telegram team, often according to some roadmap which is not public.
+Feature, language, user experience, user interface and design decisions for ImpulseM for iOS are made by the maintainers of this repository.
 
 ## Build instructions
 
@@ -35,11 +33,11 @@ environments.
 
 ## Pull upstream changes into your fork regularly
 
-Telegram-iOS is advancing quickly. It is therefore critical that you pull upstream changes into your fork on a regular basis. Nothing is worse than putting in a days of hard work into a pull request only to have it rejected because it has diverged too far from upstream.
+If you keep your fork in sync with the upstream repository it was derived from, pull upstream changes into your fork on a regular basis. Nothing is worse than putting in a days of hard work into a pull request only to have it rejected because it has diverged too far from upstream.
 
 To pull in upstream changes:
 
-    git remote add upstream https://github.com/TelegramMessenger/Telegram-iOS.git
+    git remote add upstream <URL of the upstream repository>
     git fetch upstream master
 
 Check the log to be sure that you actually want the changes, before merging:
@@ -58,7 +56,7 @@ For more info, see [GitHub Help][help_fork_repo].
 
 ## How to get your pull request accepted
 
-We want to improve Telegram-iOS with your contributions. But we also want to provide a stable experience for our users and the community. Follow these rules and you should succeed without a problem!
+We want to improve ImpulseM for iOS with your contributions. But we also want to provide a stable experience for our users and the community. Follow these rules and you should succeed without a problem!
 
 ### Keep your pull requests limited to a single issue
 
@@ -97,7 +95,7 @@ Furthermore, the pixel shortage is over. We want to see:
 
 ### Test your changes!
 
-Before you submit a pull request, please test your changes. Verify that Telegram-iOS still works and your changes don't cause other issue or crashes.
+Before you submit a pull request, please test your changes. Verify that ImpulseM for iOS still works and your changes don't cause other issue or crashes.
 
 ### Write a good commit message
 
@@ -108,11 +106,9 @@ Before you submit a pull request, please test your changes. Verify that Telegram
   For example: `Fix #545`
 
 [//]: # (LINKS)
-[telegram]: https://telegram.org/
 [help_fork_repo]: https://help.github.com/articles/fork-a-repo/
 [help_change_commit_message]: https://help.github.com/articles/changing-a-commit-message/
 [commit_message]: http://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html
-[pr]: https://github.com/TelegramMessenger/Telegram-iOS/compare
-[build_instructions]: https://github.com/TelegramMessenger/Telegram-iOS#quick-compilation-guide
+[pr]: https://github.com/Impulse-m/ImpulseM.Client.iOS/compare
+[build_instructions]: ../README.md
 [closing-issues-via-commit-messages]: https://help.github.com/articles/closing-issues-via-commit-messages/
-[translate]: https://translations.telegram.org
