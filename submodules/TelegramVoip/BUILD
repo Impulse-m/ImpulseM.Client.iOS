@@ -19,6 +19,7 @@ swift_library(
         "//submodules/FFMpegBinding",
         "//submodules/ManagedFile",
         "//submodules/AppBundle",
+        "//third-party/livekit-swift:LiveKit",
     ],
     visibility = [
         "//visibility:public",
