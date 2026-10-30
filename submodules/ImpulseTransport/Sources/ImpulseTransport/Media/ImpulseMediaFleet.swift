@@ -206,6 +206,16 @@ public final class ImpulseMediaFleet {
     }
 
 
+    /// Retires the carrier for a session change, on sign-in or sign-out: the next call builds a carrier from the factory, and
+    /// that carrier presents the connection token of the new session. The calls that wait for the config keep waiting, and the
+    /// endpoint stays. A closed fleet is not changed.
+    public func sessionChanged() {
+        self.queue.async {
+            self.sessionChangedOnQueue()
+        }
+    }
+
+
     /// Returns once every block queued before this call has run.
     internal func drainQueue() {
         self.queue.sync {}
@@ -334,17 +344,31 @@ public final class ImpulseMediaFleet {
     }
 
 
+    private func sessionChangedOnQueue() {
+        guard !self.closed else {
+            return
+        }
+        self.retireTransportOnQueue()
+    }
+
+
     /// Retires the carrier and fails the calls that wait for the config with `failure`. The endpoint stays, so the next
     /// call builds a new carrier from it.
     private func retireOnQueue(failing failure: ImpulseMediaFailure) {
-        let retired: ImpulseMediaTransport? = self.transport
-        self.transport = nil
         let drained: [ImpulseMediaCallState] = self.waiting
         self.waiting = []
-        retired?.close()
+        self.retireTransportOnQueue()
         for state: ImpulseMediaCallState in drained {
             self.settle(state, .failure(failure))
         }
+    }
+
+
+    /// Takes the carrier out and closes it. The next call builds a new one from the factory, and the endpoint stays.
+    private func retireTransportOnQueue() {
+        let retired: ImpulseMediaTransport? = self.transport
+        self.transport = nil
+        retired?.close()
     }
 
 

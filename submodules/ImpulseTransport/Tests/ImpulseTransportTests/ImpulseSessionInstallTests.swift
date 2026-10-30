@@ -227,7 +227,8 @@ private struct LiveInstallFixture {
 private func makeLiveInstallFixture(
     replies: [Result<[UInt8], ImpulseCarrierFailure>],
     credentials: ImpulseConnectionCredentialCache? = nil,
-    declarer: ImpulseConnectionDeclarer? = nil
+    declarer: ImpulseConnectionDeclarer? = nil,
+    mediaFleet: ImpulseMediaFleet? = nil
 ) throws -> LiveInstallFixture {
     let mapping: ImpulseMapping = try ImpulseMapping.loadBundled()
     let events: LiveInstallEvents = LiveInstallEvents()
@@ -259,7 +260,8 @@ private func makeLiveInstallFixture(
             loginGate.setOpen(signedIn)
         },
         credentials: credentials,
-        declarer: declarer
+        declarer: declarer,
+        mediaFleet: mediaFleet
     )
     let carrier: LiveInstallCarrier = LiveInstallCarrier(
         events: events,
@@ -464,5 +466,38 @@ final class ImpulseSessionInstallTests: XCTestCase {
 
         XCTAssertNil(fixture.storage.stored)
         XCTAssertEqual(fixture.events.all(), ["send auth.checkPassword"])
+    }
+
+
+    /// The install retires the media carrier of the session it replaces, so the next media call builds a carrier that
+    /// presents the access token of the new session.
+    func testInstallRetiresTheMediaCarrier() async throws {
+        let recorder: MediaTransportRecorder = MediaTransportRecorder()
+        let mediaFleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
+            return recorder.make(endpoint: endpoint)
+        })
+        let fixture: LiveInstallFixture = try makeLiveInstallFixture(
+            replies: [.success(try liveInstallBytes(hex: liveInstallCheckPasswordHex))],
+            mediaFleet: mediaFleet
+        )
+        mediaFleet.setConfig(
+            dcOptions: [ImpulseDcOption(id: 4, ipAddress: "203.0.113.5", port: 443, ipv6: false, mediaOnly: true)],
+            thisDc: 4
+        )
+        _ = mediaFleet.call(method: "upload.getFile", data: Data([1]), timeoutSeconds: 0) { (_: Result<Data, ImpulseMediaFailure>) -> Void in
+        }
+        mediaFleet.drainQueue()
+        XCTAssertEqual(recorder.transports.count, 1)
+
+        let tl: [UInt8] = try liveInstallMethodTl(mapping: fixture.mapping, name: "auth.checkPassword")
+        _ = await liveInstallPerform(session: fixture.session, tl: tl)
+        mediaFleet.drainQueue()
+        XCTAssertEqual(recorder.transports.first?.closeCount, 1)
+
+        _ = mediaFleet.call(method: "upload.getFile", data: Data([1]), timeoutSeconds: 0) { (_: Result<Data, ImpulseMediaFailure>) -> Void in
+        }
+        mediaFleet.drainQueue()
+        XCTAssertEqual(recorder.transports.count, 2)
+        XCTAssertEqual(recorder.transports[1].sent, ["upload.getFile"])
     }
 }

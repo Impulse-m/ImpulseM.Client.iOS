@@ -2,7 +2,7 @@ import XCTest
 @testable import ImpulseTransport
 
 
-private final class FakeMediaTransport: ImpulseMediaTransport {
+final class FakeMediaTransport: ImpulseMediaTransport {
     var sent: [String] = []
     var lastTimeout: TimeInterval? = nil
     var completions: [(Result<Data, ImpulseCarrierFailure>) -> Void] = []
@@ -28,7 +28,7 @@ private final class FakeMediaTransport: ImpulseMediaTransport {
 }
 
 
-private final class MediaTransportRecorder {
+final class MediaTransportRecorder {
     var endpoints: [String] = []
     var transports: [FakeMediaTransport] = []
 
@@ -461,5 +461,103 @@ final class ImpulseMediaFleetTests: XCTestCase {
             .carrier(ImpulseCarrierFailure(sdkCode: 17, appCode: 0, appType: "", metadata: [:]))
         )
         XCTAssertTrue(recorder.transports.isEmpty)
+    }
+
+
+    func testSessionChangeRetiresTheCarrier() {
+        let recorder: MediaTransportRecorder = MediaTransportRecorder()
+        let fleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
+            return recorder.make(endpoint: endpoint)
+        })
+        fleet.setConfig(
+            dcOptions: [ImpulseDcOption(id: 1, ipAddress: "203.0.113.5", port: 443, ipv6: false, mediaOnly: true)],
+            thisDc: 1
+        )
+        _ = fleet.call(method: "upload.getFile", data: Data([1]), timeoutSeconds: 0) { (_: Result<Data, ImpulseMediaFailure>) -> Void in
+        }
+        fleet.drainQueue()
+        XCTAssertEqual(recorder.transports.first?.closeCount, 0)
+        fleet.sessionChanged()
+        fleet.drainQueue()
+        XCTAssertEqual(recorder.transports.first?.closeCount, 1)
+        XCTAssertEqual(recorder.transports.count, 1)
+    }
+
+
+    func testSessionChangeKeepsWaitingCallsWaiting() {
+        let recorder: MediaTransportRecorder = MediaTransportRecorder()
+        let fleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
+            return recorder.make(endpoint: endpoint)
+        })
+        let results: MediaResultRecorder = MediaResultRecorder()
+        _ = fleet.call(method: "upload.getFile", data: Data([1]), timeoutSeconds: 0) { (result: Result<Data, ImpulseMediaFailure>) -> Void in
+            results.results.append(result)
+        }
+        fleet.drainQueue()
+        fleet.sessionChanged()
+        fleet.drainQueue()
+        XCTAssertTrue(results.results.isEmpty)
+        XCTAssertTrue(recorder.transports.isEmpty)
+        fleet.setConfig(
+            dcOptions: [ImpulseDcOption(id: 1, ipAddress: "203.0.113.5", port: 443, ipv6: false, mediaOnly: true)],
+            thisDc: 1
+        )
+        fleet.drainQueue()
+        XCTAssertEqual(recorder.transports.first?.sent, ["upload.getFile"])
+        XCTAssertTrue(results.results.isEmpty)
+    }
+
+
+    func testCallAfterSessionChangeUsesANewCarrier() {
+        let recorder: MediaTransportRecorder = MediaTransportRecorder()
+        let fleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
+            return recorder.make(endpoint: endpoint)
+        })
+        fleet.setConfig(
+            dcOptions: [ImpulseDcOption(id: 1, ipAddress: "203.0.113.5", port: 443, ipv6: false, mediaOnly: true)],
+            thisDc: 1
+        )
+        _ = fleet.call(method: "upload.getFile", data: Data([1]), timeoutSeconds: 0) { (_: Result<Data, ImpulseMediaFailure>) -> Void in
+        }
+        fleet.drainQueue()
+        fleet.sessionChanged()
+        fleet.drainQueue()
+        _ = fleet.call(method: "upload.saveFilePart", data: Data([1]), timeoutSeconds: 0) { (_: Result<Data, ImpulseMediaFailure>) -> Void in
+        }
+        fleet.drainQueue()
+        XCTAssertEqual(recorder.endpoints, [
+            "wss://203.0.113.5:443" + ImpulseMediaFleetTests.mediaSuffix,
+            "wss://203.0.113.5:443" + ImpulseMediaFleetTests.mediaSuffix,
+        ])
+        XCTAssertEqual(recorder.transports.count, 2)
+        XCTAssertEqual(recorder.transports[0].sent, ["upload.getFile"])
+        XCTAssertEqual(recorder.transports[1].sent, ["upload.saveFilePart"])
+    }
+
+
+    func testSessionChangeOnAClosedFleetChangesNothing() {
+        let recorder: MediaTransportRecorder = MediaTransportRecorder()
+        let fleet: ImpulseMediaFleet = ImpulseMediaFleet(makeTransport: { (endpoint: String) -> ImpulseMediaTransport in
+            return recorder.make(endpoint: endpoint)
+        })
+        fleet.setConfig(
+            dcOptions: [ImpulseDcOption(id: 1, ipAddress: "203.0.113.5", port: 443, ipv6: false, mediaOnly: true)],
+            thisDc: 1
+        )
+        _ = fleet.call(method: "upload.getFile", data: Data([1]), timeoutSeconds: 0) { (_: Result<Data, ImpulseMediaFailure>) -> Void in
+        }
+        fleet.drainQueue()
+        fleet.close()
+        fleet.drainQueue()
+        fleet.sessionChanged()
+        fleet.drainQueue()
+        XCTAssertEqual(recorder.transports.first?.closeCount, 1)
+        let results: MediaResultRecorder = MediaResultRecorder()
+        _ = fleet.call(method: "upload.getFile", data: Data([1]), timeoutSeconds: 0) { (result: Result<Data, ImpulseMediaFailure>) -> Void in
+            results.results.append(result)
+        }
+        fleet.drainQueue()
+        XCTAssertEqual(results.failure(at: 0), .closed)
+        XCTAssertEqual(recorder.transports.count, 1)
     }
 }

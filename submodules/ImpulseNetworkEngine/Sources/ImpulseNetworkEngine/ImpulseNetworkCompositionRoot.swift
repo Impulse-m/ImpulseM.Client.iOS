@@ -292,7 +292,8 @@ final class ImpulseNetworkCompositionRoot: ImpulseNetworkLifecycle, ImpulseNetwo
                 loginGate.setOpen(signedIn)
             },
             credentials: credentials,
-            declarer: declarer
+            declarer: declarer,
+            mediaFleet: mediaFleet
         )
 
         link.bind(parts: ImpulseAccountParts(tokens: tokens, identity: identity, credentials: credentials, declarer: declarer))

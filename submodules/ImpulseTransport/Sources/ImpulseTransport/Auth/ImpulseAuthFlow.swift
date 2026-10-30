@@ -59,6 +59,7 @@ public actor ImpulseAuthFlow {
     private let requester: any ImpulseAuthRequester
     private let transcoder: ImpulseTranscoder
     private let mapping: ImpulseMapping
+    private let mediaFleet: ImpulseMediaFleet?
     private let installer: ImpulseSessionInstaller
 
 
@@ -69,7 +70,8 @@ public actor ImpulseAuthFlow {
         realtime: ImpulseRealtime,
         requester: any ImpulseAuthRequester,
         transcoder: ImpulseTranscoder,
-        mapping: ImpulseMapping
+        mapping: ImpulseMapping,
+        mediaFleet: ImpulseMediaFleet?
     ) {
         self.identity = identity
         self.tokens = tokens
@@ -78,6 +80,7 @@ public actor ImpulseAuthFlow {
         self.requester = requester
         self.transcoder = transcoder
         self.mapping = mapping
+        self.mediaFleet = mediaFleet
         let signer: any ImpulseAuthRequester = requester
         self.installer = ImpulseSessionInstaller(
             identity: identity,
@@ -88,7 +91,8 @@ public actor ImpulseAuthFlow {
                 signer.setSignedIn(signedIn)
             },
             credentials: nil,
-            declarer: nil
+            declarer: nil,
+            mediaFleet: mediaFleet
         )
     }
 
@@ -138,7 +142,8 @@ public actor ImpulseAuthFlow {
 
 
     /// Ends the session: the server session is ended while it is still signed in, then the session tokens and the
-    /// identity are discarded, the user lane is dropped and the socket is rekeyed to a fresh identity. The pool is kept.
+    /// identity are discarded, the media fleet retires its carrier, the user lane is dropped and the socket is rekeyed to a
+    /// fresh identity. The pool is kept.
     /// The outcome of the server call does not change the sign-out. A failed mint disconnects the socket and throws.
     public func signOut() async throws {
         let session: ImpulseSessionTokens? = storage.load()
@@ -149,6 +154,7 @@ public actor ImpulseAuthFlow {
         await tokens.clear()
         requester.setSignedIn(false)
         await identity.discard()
+        mediaFleet?.sessionChanged()
         realtime.apply(plan: ImpulseAuthFlow.dropUserLanePlan(userId: userId))
         realtime.dropSessionLane()
 
