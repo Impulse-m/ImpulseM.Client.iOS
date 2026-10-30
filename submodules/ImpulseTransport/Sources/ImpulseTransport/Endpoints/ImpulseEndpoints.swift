@@ -27,8 +27,6 @@ public struct ImpulseDcOption: Equatable, Sendable {
 }
 
 public struct ImpulseEndpoints: Equatable, Sendable {
-    public static let productionBaseUrl: String = "https://rpc.impulsem.io"
-
     public let rpcBaseUrl: URL
 
     private static let realtimePath: String = "/connection/websocket?cf_ws_frame_ping_pong=true"
@@ -37,7 +35,7 @@ public struct ImpulseEndpoints: Equatable, Sendable {
 
     private let websocketBase: String
 
-    public init(baseUrl: String = ImpulseEndpoints.productionBaseUrl) throws {
+    public init(baseUrl: String) throws {
         guard let components: URLComponents = URLComponents(string: baseUrl) else {
             throw ImpulseEndpointsError.invalidBaseUrl(baseUrl)
         }

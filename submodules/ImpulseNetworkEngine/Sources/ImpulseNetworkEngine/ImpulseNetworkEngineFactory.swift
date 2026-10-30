@@ -12,15 +12,20 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
 
     private let keychain: any ImpulseKeychain
     private let keychainAccessGroup: String?
-    private let baseUrl: String
+    private let baseUrl: String?
     private let routeSource: ImpulseProxyRouteSource?
 
 
     /// The engine connects directly unless a route source is given; the transport reads the route for each new connection.
-    public init(proxyRouteSource: ImpulseProxyRouteSource? = nil) {
+    /// The base URL is the RPC host of the backend; the app takes it from its build configuration. A nil, empty or invalid
+    /// base URL makes the factory produce an unconfigured engine, which never connects.
+    public init(
+        baseUrl: String?,
+        proxyRouteSource: ImpulseProxyRouteSource? = nil
+    ) {
         self.keychain = ImpulseSystemKeychain()
         self.keychainAccessGroup = nil
-        self.baseUrl = ImpulseEndpoints.productionBaseUrl
+        self.baseUrl = baseUrl
         self.routeSource = proxyRouteSource
     }
 
@@ -28,7 +33,7 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
     init(
         keychain: any ImpulseKeychain,
         keychainAccessGroup: String?,
-        baseUrl: String,
+        baseUrl: String?,
         proxyRouteSource: ImpulseProxyRouteSource? = nil
     ) {
         self.keychain = keychain
@@ -47,6 +52,11 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
         context: MTContext,
         isAppExtension: Bool
     ) -> NetworkEngine? {
+        guard ImpulseNetworkEngineFactory.isConfigured(baseUrl: self.baseUrl) else {
+            Logger.shared.log("ImpulseNetwork", "The RPC base URL is not configured, so the engine never connects")
+            return ImpulseUnconfiguredNetworkEngine(context: context)
+        }
+
         Logger.shared.log("ImpulseNetwork", "The engine is created (app extension: \(isAppExtension))")
         ImpulseDiagnostics.setSink({ (message: String) -> Void in
             Logger.shared.log("ImpulseNetwork", message)
@@ -74,7 +84,7 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
     /// the update bridge of the context, and the route source the transport reads for each new connection.
     func makeCompositionInputs(context: MTContext) throws -> ImpulseNetworkCompositionInputs {
         return ImpulseNetworkCompositionInputs(
-            endpoints: try ImpulseEndpoints(baseUrl: self.baseUrl),
+            endpoints: try ImpulseEndpoints(baseUrl: self.baseUrl ?? ""),
             mapping: try ImpulseMapping.loadBundled(),
             keychain: self.keychain,
             keychainAccessGroup: self.resolvedAccessGroup(),
@@ -117,6 +127,16 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
 
         Logger.shared.log("ImpulseNetwork", "The bundle names no keychain access group, so the default group is used")
         return nil
+    }
+
+
+    /// Whether the base URL names an RPC host the endpoints accept. A nil, empty or invalid URL is not configured.
+    static func isConfigured(baseUrl: String?) -> Bool {
+        guard let baseUrl: String = baseUrl, !baseUrl.isEmpty else {
+            return false
+        }
+
+        return (try? ImpulseEndpoints(baseUrl: baseUrl)) != nil
     }
 
 

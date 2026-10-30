@@ -7,7 +7,7 @@ final class ChatFoldersInviteSlugTests: XCTestCase {
     }
 
     func testStripsImpulseMPublicPrefix() {
-        XCTAssertEqual(chatFolderInviteSlug(link: "https://o.impulsem.net/addlist/abc123"), "abc123")
+        XCTAssertEqual(chatFolderInviteSlug(link: "https://o.example.org/addlist/abc123"), "abc123")
     }
 
     func testStripsAnyPublicPrefixEndingInSlash() {
@@ -29,7 +29,7 @@ final class ChatFoldersInviteSlugTests: XCTestCase {
     func testExportedLinkSlugUsesThePublicPrefixRule() {
         let link: ExportedChatFolderLink = ExportedChatFolderLink(
             title: "Work",
-            link: "https://o.impulsem.net/addlist/xyz789",
+            link: "https://o.example.org/addlist/xyz789",
             peerIds: [],
             isRevoked: false
         )

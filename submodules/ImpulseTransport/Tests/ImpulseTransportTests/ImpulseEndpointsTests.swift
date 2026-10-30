@@ -2,21 +2,23 @@ import XCTest
 @testable import ImpulseTransport
 
 final class ImpulseEndpointsTests: XCTestCase {
-    func testProductionRealtimeUrl() throws {
-        let endpoints: ImpulseEndpoints = try ImpulseEndpoints()
+    private let rpcBaseUrl: String = "https://rpc.example.org"
+
+    func testConfiguredRealtimeUrl() throws {
+        let endpoints: ImpulseEndpoints = try ImpulseEndpoints(baseUrl: self.rpcBaseUrl)
 
         XCTAssertEqual(
             endpoints.realtimeUrl(),
-            "wss://rpc.impulsem.io/connection/websocket?cf_ws_frame_ping_pong=true"
+            "wss://rpc.example.org/connection/websocket?cf_ws_frame_ping_pong=true"
         )
     }
 
-    func testProductionPoolUrl() throws {
-        let endpoints: ImpulseEndpoints = try ImpulseEndpoints()
+    func testConfiguredPoolUrl() throws {
+        let endpoints: ImpulseEndpoints = try ImpulseEndpoints(baseUrl: self.rpcBaseUrl)
 
         XCTAssertEqual(
             endpoints.poolUrl(),
-            "wss://rpc.impulsem.io/pool/connection/websocket?cf_protocol=protobuf&cf_ws_frame_ping_pong=true"
+            "wss://rpc.example.org/pool/connection/websocket?cf_protocol=protobuf&cf_ws_frame_ping_pong=true"
         )
     }
 
@@ -61,14 +63,14 @@ final class ImpulseEndpointsTests: XCTestCase {
     }
 
     func testRpcBaseUrlIsKept() throws {
-        let endpoints: ImpulseEndpoints = try ImpulseEndpoints()
+        let endpoints: ImpulseEndpoints = try ImpulseEndpoints(baseUrl: self.rpcBaseUrl)
 
-        XCTAssertEqual(endpoints.rpcBaseUrl.absoluteString, "https://rpc.impulsem.io")
+        XCTAssertEqual(endpoints.rpcBaseUrl.absoluteString, "https://rpc.example.org")
     }
 
     func testUnsupportedSchemeIsRejected() {
-        XCTAssertThrowsError(try ImpulseEndpoints(baseUrl: "wss://rpc.impulsem.io")) { (error: Error) in
-            XCTAssertEqual(error as? ImpulseEndpointsError, .invalidBaseUrl("wss://rpc.impulsem.io"))
+        XCTAssertThrowsError(try ImpulseEndpoints(baseUrl: "wss://rpc.example.org")) { (error: Error) in
+            XCTAssertEqual(error as? ImpulseEndpointsError, .invalidBaseUrl("wss://rpc.example.org"))
         }
     }
 

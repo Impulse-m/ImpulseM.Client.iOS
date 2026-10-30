@@ -8,6 +8,7 @@ import TelegramCore
 
 final class ImpulseNetworkEngineFactoryTests: XCTestCase {
     private let testGroup: String = "test.group"
+    private let testBaseUrl: String = "https://rpc.example.org"
 
     override func setUp() {
         super.setUp()
@@ -33,6 +34,56 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
         XCTAssertFalse(self.makeFactory().supportsWebProxy)
     }
 
+    func testFactoryWithNilBaseUrlGivesTheUnconfiguredEngine() {
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(baseUrl: nil)
+        let engine: NetworkEngine? = factory.makeEngine(context: impulseMakeContext(), isAppExtension: false)
+        XCTAssertTrue(engine is ImpulseUnconfiguredNetworkEngine)
+        XCTAssertEqual(engine?.kind, .impulse)
+    }
+
+    func testFactoryWithEmptyBaseUrlGivesTheUnconfiguredEngine() {
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(baseUrl: "")
+        let engine: NetworkEngine? = factory.makeEngine(context: impulseMakeContext(), isAppExtension: true)
+        XCTAssertTrue(engine is ImpulseUnconfiguredNetworkEngine)
+        XCTAssertEqual(engine?.kind, .impulse)
+    }
+
+    func testFactoryWithInvalidBaseUrlGivesTheUnconfiguredEngine() {
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(baseUrl: "rpc.example.org")
+        let engine: NetworkEngine? = factory.makeEngine(context: impulseMakeContext(), isAppExtension: false)
+        XCTAssertTrue(engine is ImpulseUnconfiguredNetworkEngine)
+        XCTAssertEqual(engine?.kind, .impulse)
+    }
+
+    func testUnconfiguredEngineFailsEveryRequestWithoutNetwork() {
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(baseUrl: nil)
+        let engine: NetworkEngine? = factory.makeEngine(context: impulseMakeContext(), isAppExtension: false)
+        let session: NetworkEngineSession? = engine?.makeSession(datacenterId: 2, role: .main, usageCalculationInfo: nil, delegate: nil)
+        let completed: XCTestExpectation = self.expectation(description: "The request fails")
+        var failure: NetworkEngineRequestFailure?
+        let request: NetworkEngineRequest = NetworkEngineRequest(
+            payload: Data(),
+            name: "test.unconfigured",
+            parse: { (_: Data) -> Any? in
+                return nil
+            },
+            shouldContinueAfterError: { (_: NetworkEngineErrorContext) -> Bool in
+                return false
+            },
+            completed: { (result: Result<NetworkEngineResponse, NetworkEngineRequestFailure>) -> Void in
+                if case .failure(let value) = result {
+                    failure = value
+                }
+                completed.fulfill()
+            }
+        )
+        let _ = session?.requestService.add(request)
+        self.wait(for: [completed], timeout: 5.0)
+        XCTAssertEqual(failure?.error.errorCode, 500)
+        XCTAssertEqual(failure?.error.errorDescription, "IMPULSE_NOT_CONFIGURED")
+        XCTAssertEqual(failure?.error.errorDescription, ImpulseUnconfiguredNetworkEngine.notConfiguredError.errorDescription)
+    }
+
     func testFactoryWithoutRouteSourceGivesNoRouteToTheRoot() throws {
         let factory: ImpulseNetworkEngineFactory = self.makeFactory()
         let inputs: ImpulseNetworkCompositionInputs = try factory.makeCompositionInputs(context: impulseMakeContext())
@@ -40,7 +91,7 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
     }
 
     func testPublicFactoryDefaultsToNoRouteSource() throws {
-        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory()
+        let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(baseUrl: self.testBaseUrl)
         let inputs: ImpulseNetworkCompositionInputs = try factory.makeCompositionInputs(context: impulseMakeContext())
         XCTAssertNil(inputs.routeSource)
     }
@@ -55,7 +106,7 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
         let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(
             keychain: ImpulseFactoryKeychain(),
             keychainAccessGroup: self.testGroup,
-            baseUrl: ImpulseEndpoints.productionBaseUrl,
+            baseUrl: self.testBaseUrl,
             proxyRouteSource: source
         )
         let inputs: ImpulseNetworkCompositionInputs = try factory.makeCompositionInputs(context: impulseMakeContext())
@@ -66,7 +117,7 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
         let factory: ImpulseNetworkEngineFactory = ImpulseNetworkEngineFactory(
             keychain: ImpulseFactoryKeychain(),
             keychainAccessGroup: self.testGroup,
-            baseUrl: ImpulseEndpoints.productionBaseUrl,
+            baseUrl: self.testBaseUrl,
             proxyRouteSource: ImpulseFactoryRouteSource(currentRoute: nil)
         )
         let engine: NetworkEngine? = factory.makeEngine(context: impulseMakeContext(), isAppExtension: false)
@@ -244,13 +295,13 @@ final class ImpulseNetworkEngineFactoryTests: XCTestCase {
         return ImpulseNetworkEngineFactory(
             keychain: ImpulseFactoryKeychain(),
             keychainAccessGroup: self.testGroup,
-            baseUrl: ImpulseEndpoints.productionBaseUrl
+            baseUrl: self.testBaseUrl
         )
     }
 
     private func makeRoot() throws -> ImpulseNetworkCompositionRoot {
         let inputs: ImpulseNetworkCompositionInputs = ImpulseNetworkCompositionInputs(
-            endpoints: try ImpulseEndpoints(),
+            endpoints: try ImpulseEndpoints(baseUrl: self.testBaseUrl),
             mapping: try ImpulseMapping.loadBundled(),
             keychain: ImpulseFactoryKeychain(),
             keychainAccessGroup: self.testGroup,
