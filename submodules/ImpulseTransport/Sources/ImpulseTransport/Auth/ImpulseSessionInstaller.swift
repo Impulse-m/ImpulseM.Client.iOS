@@ -2,8 +2,9 @@ import Foundation
 
 
 /// Installs the session that a login reply carries. The sign-in flow and the live reply path run the same steps in one
-/// order: the tokens are stored, the identity is discarded, the socket is rekeyed to the access token, the user lane is
-/// subscribed, the requests that wait for a login are released, and the connection is declared on the session credential.
+/// order: the tokens are stored, the identity is discarded, the media fleet retires its carrier, the socket is rekeyed to
+/// the access token, the user lane is subscribed, the requests that wait for a login are released, and the connection is
+/// declared on the session credential.
 public actor ImpulseSessionInstaller {
     private static let authorizationType: String = "auth.Authorization"
     private static let authorizationArm: Int = 1
@@ -30,6 +31,7 @@ public actor ImpulseSessionInstaller {
     private let setSignedIn: @Sendable (Bool) -> Void
     private let credentials: ImpulseConnectionCredentialCache?
     private let declarer: ImpulseConnectionDeclarer?
+    private let mediaFleet: ImpulseMediaFleet?
 
 
     public init(
@@ -39,7 +41,8 @@ public actor ImpulseSessionInstaller {
         mapping: ImpulseMapping,
         setSignedIn: @escaping @Sendable (Bool) -> Void,
         credentials: ImpulseConnectionCredentialCache?,
-        declarer: ImpulseConnectionDeclarer?
+        declarer: ImpulseConnectionDeclarer?,
+        mediaFleet: ImpulseMediaFleet?
     ) {
         self.identity = identity
         self.tokens = tokens
@@ -48,6 +51,7 @@ public actor ImpulseSessionInstaller {
         self.setSignedIn = setSignedIn
         self.credentials = credentials
         self.declarer = declarer
+        self.mediaFleet = mediaFleet
     }
 
 
@@ -103,6 +107,7 @@ public actor ImpulseSessionInstaller {
         )
         await self.tokens.onLoginTokens(session)
         await self.identity.discard()
+        self.mediaFleet?.sessionChanged()
         self.credentials?.setSessionAccessToken(session.accessToken)
         self.realtime.dropIdentityLane()
         self.realtime.rekey(token: session.accessToken)

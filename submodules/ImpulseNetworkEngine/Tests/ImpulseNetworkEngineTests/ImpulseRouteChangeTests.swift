@@ -372,7 +372,7 @@ private func makeRouteRoot(
     epochSink: any ImpulseRouteEpochSink
 ) throws -> ImpulseNetworkCompositionRoot {
     let inputs: ImpulseNetworkCompositionInputs = ImpulseNetworkCompositionInputs(
-        endpoints: try ImpulseEndpoints(),
+        endpoints: try ImpulseEndpoints(baseUrl: "https://rpc.example.org"),
         mapping: try ImpulseMapping.loadBundled(),
         keychain: ImpulseFactoryKeychain(),
         keychainAccessGroup: "test.group",

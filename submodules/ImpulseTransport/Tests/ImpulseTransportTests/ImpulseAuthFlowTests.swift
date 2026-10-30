@@ -336,7 +336,8 @@ final class ImpulseAuthFlowTests: XCTestCase {
             realtime: realtime,
             requester: requester,
             transcoder: transcoder,
-            mapping: mapping
+            mapping: mapping,
+            mediaFleet: nil
         )
         return Fixture(
             mapping: mapping,
@@ -379,7 +380,8 @@ final class ImpulseAuthFlowTests: XCTestCase {
             realtime: fixture.realtime,
             requester: service,
             transcoder: ImpulseTranscoder(mapping: fixture.mapping),
-            mapping: fixture.mapping
+            mapping: fixture.mapping,
+            mediaFleet: nil
         )
     }
 

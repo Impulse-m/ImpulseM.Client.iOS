@@ -92,7 +92,7 @@ private final class FakeRouteSource: ImpulseProxyRouteSource, Sendable {
 
 final class ImpulsePoolCarrierTests: XCTestCase {
     func testPoolOptionsNeverPresentToken() {
-        let options: CentrifugeRpcPoolOptions = ImpulsePoolCarrier.makePoolOptions(endpoint: "wss://rpc.impulsem.io/ws")
+        let options: CentrifugeRpcPoolOptions = ImpulsePoolCarrier.makePoolOptions(endpoint: "wss://rpc.example.org/ws")
         XCTAssertFalse(options.tokenFrom)
         XCTAssertTrue(options.token.isEmpty)
         XCTAssertNil(options.tokenGetter)
@@ -153,7 +153,7 @@ final class ImpulsePoolCarrierTests: XCTestCase {
 
 
     func testPoolFleetShape() {
-        let options: CentrifugeRpcPoolOptions = ImpulsePoolCarrier.makePoolOptions(endpoint: "wss://rpc.impulsem.io/ws")
+        let options: CentrifugeRpcPoolOptions = ImpulsePoolCarrier.makePoolOptions(endpoint: "wss://rpc.example.org/ws")
         XCTAssertEqual(options.maxConnectionsPerEndpoint, 1)
         XCTAssertEqual(options.maxInflightPerConnection, 1)
         XCTAssertEqual(options.maxQueued, 64)
@@ -387,7 +387,7 @@ final class ImpulsePoolCarrierTests: XCTestCase {
 
     func testRealPoolFailsCallsWhileMainIsDisconnected() throws {
         let carrier: ImpulsePoolCarrier = try ImpulsePoolCarrier(
-            endpoint: "wss://rpc.impulsem.io/connection/websocket",
+            endpoint: "wss://rpc.example.org/connection/websocket",
             identityRenewal: { (completion: @escaping (Result<Void, Error>) -> Void) -> Void in
                 completion(.success(()))
             }
@@ -410,7 +410,7 @@ final class ImpulsePoolCarrierTests: XCTestCase {
         recorder: MainConfigRecorder
     ) throws -> ImpulsePoolCarrier {
         return try ImpulsePoolCarrier(
-            endpoint: "wss://rpc.impulsem.io/connection/websocket",
+            endpoint: "wss://rpc.example.org/connection/websocket",
             identityRenewal: { (completion: @escaping (Result<Void, Error>) -> Void) -> Void in
                 completion(.success(()))
             },

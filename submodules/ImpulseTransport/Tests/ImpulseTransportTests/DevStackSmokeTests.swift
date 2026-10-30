@@ -4,12 +4,12 @@ import XCTest
 @testable import ImpulseTransport
 
 
-private let devStackSkipMessage: String = "Set IMPULSEM_DEV_STACK=1 to run the dev-stack smoke checks"
+private let devStackSkipMessage: String = "Set IMPULSEM_DEV_STACK=1 and IMPULSEM_DEV_STACK_BASE_URL to run the dev-stack smoke checks"
 
 
 /// The settings of the dev-stack run, read from the environment. The run is opt-in: every test skips unless
-/// `IMPULSEM_DEV_STACK` is `1`. `IMPULSEM_DEV_STACK_BASE_URL` names the stand (the production base by default), and
-/// `IMPULSEM_DEV_STACK_PHONE` names the phone number that `auth.sendCode` is asked for.
+/// `IMPULSEM_DEV_STACK` is `1` and `IMPULSEM_DEV_STACK_BASE_URL` names the stand. `IMPULSEM_DEV_STACK_PHONE` names
+/// the phone number that `auth.sendCode` is asked for.
 private struct DevStackSettings: Sendable {
     static let enableVariable: String = "IMPULSEM_DEV_STACK"
     static let baseUrlVariable: String = "IMPULSEM_DEV_STACK_BASE_URL"
@@ -30,7 +30,11 @@ private struct DevStackSettings: Sendable {
 
 
     static var isEnabled: Bool {
-        return ProcessInfo.processInfo.environment[DevStackSettings.enableVariable] == "1"
+        let environment: [String: String] = ProcessInfo.processInfo.environment
+        guard environment[DevStackSettings.enableVariable] == "1" else {
+            return false
+        }
+        return !DevStackSettings.value(of: DevStackSettings.baseUrlVariable, fallback: "", in: environment).isEmpty
     }
 
 
@@ -38,7 +42,7 @@ private struct DevStackSettings: Sendable {
         let environment: [String: String] = ProcessInfo.processInfo.environment
         let baseUrl: String = DevStackSettings.value(
             of: DevStackSettings.baseUrlVariable,
-            fallback: ImpulseEndpoints.productionBaseUrl,
+            fallback: "",
             in: environment
         )
         let phone: String = DevStackSettings.value(
