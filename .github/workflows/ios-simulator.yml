@@ -53,16 +53,15 @@ jobs:
           test -n "$INSTALLED_XCODE_VERSION"
           echo "Installed Xcode version: $INSTALLED_XCODE_VERSION"
 
-      - name: Check out submodules except the Rust engine
+      - name: Check out submodules
         run: |
           set -eu
           # Two submodules use upstream relative URLs, which resolve to repositories this organisation does not have.
           git config --global url."https://github.com/TelegramMessenger/rlottie.git".insteadOf "https://github.com/Impulse-m/rlottie.git"
           git config --global url."https://github.com/TelegramMessenger/tgcalls.git".insteadOf "https://github.com/Impulse-m/tgcalls.git"
-          # The app no longer builds the Rust engine, so its submodule is not needed.
+          # The Rust engine is checked out too: MODULE.bazel reads its Cargo.Bazel.lock for every build.
           git config --file .gitmodules --get-regexp '^submodule\..*\.path$' \
             | awk '{print $2}' \
-            | grep -v '^third-party/mtproto-engine$' \
             > "$RUNNER_TEMP/submodule-paths.txt"
           while IFS= read -r SUBMODULE_PATH; do
             git submodule update --init --recursive -- "$SUBMODULE_PATH"
