@@ -161,11 +161,9 @@ jobs:
           mkdir -p build-logs
           swift test --package-path submodules/ImpulseTransport 2>&1 | tee build-logs/swift-test-impulse-transport.log
 
-      - name: Test ImpulseNetworkEngine package
-        run: |
-          set -o pipefail
-          mkdir -p build-logs
-          swift test --package-path submodules/ImpulseNetworkEngine 2>&1 | tee build-logs/swift-test-impulse-network-engine.log
+      # The ImpulseNetworkEngine package depends on the TelegramCore SwiftPM package, whose FlatSerialization and
+      # TelegramApi sources only the macOS repository generates. Its tests run there, in the macOS CI: the ci/ios-shared
+      # branch of ImpulseM.Client.Desktop.Mac points its telegram-ios submodule at this branch.
 
       - name: Upload build logs
         if: failure()
