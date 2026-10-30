@@ -256,6 +256,7 @@ http_archive(
     name = "libxray_apple",
     build_file = "//third-party/libXray:libXray.BUILD",
     sha256 = "91343cd7542f85dffb17c9e273f0afde207b0004aa49848949e69e4c12450f80",
+    strip_prefix = "libxray-apple-cgo",
     urls = ["https://github.com/XTLS/libXray/releases/download/v26.9.30/libxray-apple-cgo.zip"],
 )
 
