@@ -454,9 +454,6 @@ plist_fragment(
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>im</string>
-                <string>tonsite</string>
-                <string>ton</string>
-                <string>tc</string>
             </array>
         </dict>
     </array>
