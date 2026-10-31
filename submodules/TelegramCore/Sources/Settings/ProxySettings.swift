@@ -120,7 +120,7 @@ public func parseWebProxySettingsLink(_ value: String) -> ProxyServerSettings? {
         && components.host?.lowercased() == "t.me"
         && components.path == "/webproxy"
         && (components.port == nil || components.port == Int(WebProxyConfiguration.port))
-    let isTelegramScheme = scheme == "tg"
+    let isTelegramScheme = (scheme == "tg" || scheme == "im")
         && components.host?.lowercased() == "webproxy"
         && (components.path.isEmpty || components.path == "/")
         && components.port == nil

@@ -120,7 +120,7 @@ public func parseConfirmationCodeUrl(sharedContext: SharedAccountContext, url: U
             return code
         }
     }
-    if url.scheme == "tg" {
+    if url.scheme == "tg" || url.scheme == "im" {
         if let host = url.host, let query = url.query, let parsedUrl = parseInternalUrl(sharedContext: sharedContext, context: nil, query: host + "?" + query) {
             switch parsedUrl {
             case let .confirmationCode(code):
@@ -397,7 +397,7 @@ private func openCheckedExternalUrl(context: AccountContext, urlContext: OpenURL
         return
     }
     
-    if canonicalUrl.scheme?.lowercased() == "tg", canonicalUrl.host?.lowercased() == "companion" {
+    if let scheme = canonicalUrl.scheme?.lowercased(), scheme == "tg" || scheme == "im", canonicalUrl.host?.lowercased() == "companion" {
         dismissInput()
         let controller = DebugCompanionScreen(context: context, standalone: navigationController == nil)
         if let navigationController {
@@ -447,7 +447,7 @@ private func openCheckedExternalUrl(context: AccountContext, urlContext: OpenURL
     )
     
     let continueHandling: () -> Void = {
-        if let scheme = parsedUrl.scheme, (scheme == "tg" || scheme == context.sharedContext.applicationBindings.appSpecificScheme) {
+        if let scheme = parsedUrl.scheme, (scheme == "tg" || scheme == "im" || scheme == context.sharedContext.applicationBindings.appSpecificScheme) {
             if parsedUrl.host == "tonsite" {
                 if let value = URL(string: "tonsite:/" + parsedUrl.path) {
                     parsedUrl = value
@@ -455,7 +455,7 @@ private func openCheckedExternalUrl(context: AccountContext, urlContext: OpenURL
             }
         }
         
-        if let scheme = parsedUrl.scheme, (scheme == "tg" || scheme == context.sharedContext.applicationBindings.appSpecificScheme) {
+        if let scheme = parsedUrl.scheme, (scheme == "tg" || scheme == "im" || scheme == context.sharedContext.applicationBindings.appSpecificScheme) {
             var convertedUrl: String?
             let host = parsedUrl.host?.lowercased() ?? ""
             if host == "debug", parsedUrl.path == "/crash_reports" {

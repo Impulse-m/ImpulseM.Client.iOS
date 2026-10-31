@@ -106,7 +106,7 @@ public func chatTextLinkEditController(
         }
         |> distinctUntilChanged
         |> mapToSignal { link -> Signal<(String, TelegramMediaWebpage?), NoError> in
-            guard !link.isEmpty && isValidUrl(link, validSchemes: ["http": true, "https": true, "tg": false, "ton": false, "tonsite": true]) else {
+            guard !link.isEmpty && isValidUrl(link, validSchemes: ["http": true, "https": true, "tg": false, "im": false, "ton": false, "tonsite": true]) else {
                 return .single((link, nil))
             }
 
@@ -140,7 +140,7 @@ public func chatTextLinkEditController(
 
     applyImpl = {
         let updatedLink = explicitUrl(inputState.value.string)
-        if !updatedLink.isEmpty && isValidUrl(updatedLink, validSchemes: ["http": true, "https": true, "tg": false, "ton": false, "tonsite": true]) {
+        if !updatedLink.isEmpty && isValidUrl(updatedLink, validSchemes: ["http": true, "https": true, "tg": false, "im": false, "ton": false, "tonsite": true]) {
             dismissImpl?()
             apply(updatedLink, currentPreview?.link == updatedLink ? currentPreview?.webpage : nil)
         } else if inputState.value.string.isEmpty {

@@ -283,7 +283,7 @@ public func generateTextEntities(_ text: String, enabledTypes: EnabledEntityType
                                 guard let url = result.url else {
                                     return
                                 }
-                                if url.scheme != "tg" {
+                                if url.scheme != "tg" && url.scheme != "im" {
                                     guard var host = url.host?.lowercased() else {
                                         return
                                     }

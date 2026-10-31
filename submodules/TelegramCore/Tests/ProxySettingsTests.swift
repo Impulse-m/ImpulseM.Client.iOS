@@ -77,6 +77,7 @@ final class ProxySettingsTests: XCTestCase {
         XCTAssertEqual(settings.port, 443)
         XCTAssertEqual(webProxySettingsLink(settings), "https://t.me/webproxy?server=proxy.example.com&secret=\(secret)")
         XCTAssertEqual(parseWebProxySettingsLink(try XCTUnwrap(webProxySettingsLink(settings))), settings)
+        XCTAssertEqual(parseWebProxySettingsLink("im://webproxy?server=PROXY.EXAMPLE.COM&secret=\(secret)"), settings)
 
         XCTAssertNil(parseWebProxySettingsLink("https://t.me/webproxy?server=proxy.example.com&server=other.example.com&secret=\(secret)"))
         // Unknown items and a trailing "&" are ignored rather than making the link dead.

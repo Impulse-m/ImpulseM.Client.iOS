@@ -499,10 +499,10 @@ public final class QrCodeScreen: ViewControllerComponentContainer {
                 switch server.connection {
                 case let .mtp(secret):
                     let secret = MTProxySecret.parseData(secret)?.serializeToString() ?? ""
-                    link = "\(externalLink ? "https://t.me/proxy" : "tg://proxy")?server=\(serverHost)&port=\(server.port)"
+                    link = "\(externalLink ? "https://t.me/proxy" : "im://proxy")?server=\(serverHost)&port=\(server.port)"
                     link += "&secret=\(secret.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlQueryValueAllowed) ?? "")"
                 case let .socks5(username, password):
-                    link = "\(externalLink ? "https://t.me/socks" : "tg://socks")?server=\(serverHost)&port=\(server.port)"
+                    link = "\(externalLink ? "https://t.me/socks" : "im://socks")?server=\(serverHost)&port=\(server.port)"
                     if let username, !username.isEmpty {
                         link += "&user=\(username.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlQueryValueAllowed) ?? "")"
                     }

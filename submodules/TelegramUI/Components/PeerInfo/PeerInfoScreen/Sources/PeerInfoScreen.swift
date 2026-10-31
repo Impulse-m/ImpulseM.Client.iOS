@@ -5122,7 +5122,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
                                 return
                             }
 
-                            let link = "tg://settings/\(item.id)"
+                            let link = "im://settings/\(item.id)"
                             let items: [ContextMenuItem] = [
                                 .action( ContextMenuActionItem(
                                     text: "Copy Link",

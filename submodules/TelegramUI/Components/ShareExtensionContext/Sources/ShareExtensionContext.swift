@@ -236,7 +236,7 @@ public class ShareRootControllerImpl {
             
             setupSharedLogger(rootPath: rootPath, path: logsPath)
             
-            let applicationBindings = TelegramApplicationBindings(isMainApp: false, appBundleId: self.initializationData.appBundleId, appBuildType: self.initializationData.appBuildType, containerPath: self.initializationData.appGroupPath, appSpecificScheme: "tg", openUrl: { [weak self] url in
+            let applicationBindings = TelegramApplicationBindings(isMainApp: false, appBundleId: self.initializationData.appBundleId, appBuildType: self.initializationData.appBuildType, containerPath: self.initializationData.appGroupPath, appSpecificScheme: "im", openUrl: { [weak self] url in
                 self?.openUrl(url)
             }, openUniversalUrl: { _, completion in
                 completion.completion(false)
@@ -609,7 +609,7 @@ public class ShareRootControllerImpl {
                                     }
                                     
                                     dispatchGroup.notify(queue: .main) {
-                                        self.openUrl("tg://shareStory?session=\(sessionId)")
+                                        self.openUrl("im://shareStory?session=\(sessionId)")
                                     }
                                 }
                             }

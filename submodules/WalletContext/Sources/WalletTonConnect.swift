@@ -1273,7 +1273,7 @@ public struct TonConnectLink: Equatable, Sendable {
         guard let url = URLComponents(string: value) else { return false }
         let scheme = url.scheme?.lowercased()
         let host = url.host?.lowercased()
-        let telegramScheme = scheme == "tg" || scheme == "telegram"
+        let telegramScheme = scheme == "tg" || scheme == "im" || scheme == "telegram"
         if scheme == "tc" || (telegramScheme && host == "ton-connect") { return true }
         let items = url.queryItems ?? []
         let carriesStart = items.contains { $0.name == "startapp" && $0.value?.hasPrefix("tonconnect-") == true }
