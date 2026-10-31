@@ -179,7 +179,7 @@ final class RoundVideoDecorationProvider {
         }
         return cachesUrl
             .appendingPathComponent("Camera", isDirectory: true)
-            .appendingPathComponent("PlaneLogoPlain.bgra", isDirectory: false)
+            .appendingPathComponent("PlaneLogoPlainV2.bgra", isDirectory: false)
     }
 
     private static func loadWatermark() -> RoundVideoDecorationImage? {

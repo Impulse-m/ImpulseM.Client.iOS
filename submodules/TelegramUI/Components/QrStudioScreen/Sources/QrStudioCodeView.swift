@@ -535,7 +535,7 @@ final class QrStudioCodeView: UIView {
             self.addSubview(self.planeHostView)
         }
         self.planeHostView.bounds = CGRect(x: 0.0, y: 0.0, width: planeSide, height: planeSide)
-        self.planeHostView.center = CGPoint(x: size.width * 0.5, y: size.height * 0.5 - 1.0)
+        self.planeHostView.center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
         self.planeHostView.isHidden = !hasCode
         if self.planeLayer.superlayer == nil {
             self.planeHostView.layer.addSublayer(self.planeLayer)

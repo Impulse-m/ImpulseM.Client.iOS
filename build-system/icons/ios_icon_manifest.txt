@@ -162,6 +162,4 @@ impulsem_glyph_white.svg|submodules/TelegramUI/Images.xcassets/Call/CallKitLogo.
 impulsem_glyph_white.svg|submodules/TelegramUI/Images.xcassets/Call/CallTitleLogo.imageset/ic_calls_tlogo.pdf|24pt
 impulsem_glyph_black.svg|submodules/TelegramUI/Images.xcassets/Chat/Context Menu/Telegram.imageset/tlogo_24.pdf|24pt
 impulsem_glyph_black.svg|Telegram/Telegram-iOS/Icons.xcassets/Shortcuts/AppIcon.imageset/tlogo_24.pdf|24pt
-impulsem_glyph_blue_tight.svg|submodules/TelegramUI/Images.xcassets/Chat/Links/QrLogo.imageset/ic_qrlogo.pdf|24pt
-impulsem_glyph_blue_tight.svg|submodules/TelegramUI/Images.xcassets/Share/QrPlaneIcon.imageset/ic_qrlogo.pdf|24pt
 impulsem_glyph_black.svg|submodules/TelegramUI/Images.xcassets/Chat/Message/UnsupportedIcon.imageset/logo.pdf|24pt

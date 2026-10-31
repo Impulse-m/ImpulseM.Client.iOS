@@ -2171,12 +2171,12 @@ private class QrContentNode: ASDisplayNode, ContentNode {
             
             if let codeStaticIconNode = self.codeStaticIconNode {
                 transition.updateBounds(node: codeStaticIconNode, bounds: CGRect(origin: CGPoint(), size: cutoutFrame.size))
-                transition.updatePosition(node: codeStaticIconNode, position: imageCenter.offsetBy(dx: 0.0, dy: -1.0))
+                transition.updatePosition(node: codeStaticIconNode, position: imageCenter)
             } else if let codeAnimatedIconNode = self.codeAnimatedIconNode {
                 codeAnimatedIconNode.updateLayout(size: cutoutFrame.size)
                 
                 transition.updateBounds(node: codeAnimatedIconNode, bounds: CGRect(origin: CGPoint(), size: cutoutFrame.size))
-                transition.updatePosition(node: codeAnimatedIconNode, position: imageCenter.offsetBy(dx: 0.0, dy: -1.0))
+                transition.updatePosition(node: codeAnimatedIconNode, position: imageCenter)
             }
             
             let backgroundSize = CGSize(width: floorToScreenPixels(cutoutFrame.width - 8.0), height: floorToScreenPixels(cutoutFrame.height - 8.0))
