@@ -37,6 +37,15 @@ final class ImpulseEnvelopeTests: XCTestCase {
     }
 
 
+    /// The server writes `pts` and `ptsCount` as zero on the session and system lanes: the frame reads as pts-less.
+    func testExplicitZeroPtsAndPtsCountReadAsPtsLess() {
+        let result: ImpulseEnvelopeParseResult = ImpulseEnvelope.parse(
+            bytes: bytes("{\"type\":9,\"pts\":0,\"ptsCount\":0,\"date\":5,\"data\":\"aGVsbG8=\"}")
+        )
+        XCTAssertEqual(result, .envelope(ImpulseEnvelope(type: 9, pts: 0, ptsCount: 0, date: 5, body: helloBody())))
+    }
+
+
     func testNumericStringsAreAcceptedForNumericFields() {
         let result: ImpulseEnvelopeParseResult = ImpulseEnvelope.parse(
             bytes: bytes("{\"type\":\"1\",\"pts\":\"9\",\"ptsCount\":\"1\",\"date\":\"5\",\"data\":\"aGVsbG8=\"}")

@@ -76,6 +76,14 @@ public struct ImpulseLaneRouter: Sendable {
     }
 
 
+    /// Whether the server publishes on this lane to every connection of the account: a session lane or the system config
+    /// lane. The update socket is subscribed to these server-side, so the client never subscribes to them.
+    public static func isServerSideLane(_ channel: String) -> Bool {
+        let lane: ImpulseLaneKind = ImpulseLaneRouter.kind(of: channel)
+        return lane == .session || lane == .system
+    }
+
+
     /// The name of the session lane of one session: `session:{userId}:{sessionHash}`.
     public static func sessionLane(
         userId: Int64,

@@ -353,4 +353,110 @@ final class ImpulseRealtimeTests: XCTestCase {
         )
         XCTAssertEqual(ImpulseRealtime.classify(tl: [0x01, 0x02], updateConstructorIds: updateIds), .unexpected)
     }
+
+
+    func testServerSidePublicationOnSessionLaneIsRoutedAsUpdates() throws {
+        let fixture: Fixture = try makeFixture()
+        let constructor: ImpulseMappingConstructor = try XCTUnwrap(fixture.mapping.constructor(id: 1957577280))
+        let tl: [UInt8] = try ImpulseTlSynth(mapping: fixture.mapping).constructorTl(constructor: constructor, allFlags: false)
+        let data: Data = try publicationData(tl: tl, transcoder: fixture.transcoder)
+
+        fixture.realtime.handleServerPublication(channel: "session:5:77", data: data)
+
+        XCTAssertEqual(fixture.recorder.updates, [ImpulseRealtimeUpdates(channel: "session:5:77", tl: tl)])
+        XCTAssertEqual(fixture.recorder.differences, [])
+    }
+
+
+    func testServerSidePublicationOnSystemConfigIsRoutedAsUpdates() throws {
+        let fixture: Fixture = try makeFixture()
+        let constructor: ImpulseMappingConstructor = try XCTUnwrap(fixture.mapping.constructor(id: 1957577280))
+        let tl: [UInt8] = try ImpulseTlSynth(mapping: fixture.mapping).constructorTl(constructor: constructor, allFlags: false)
+        let data: Data = try publicationData(tl: tl, transcoder: fixture.transcoder)
+
+        fixture.realtime.handleServerPublication(channel: "system:config", data: data)
+
+        XCTAssertEqual(fixture.recorder.updates, [ImpulseRealtimeUpdates(channel: "system:config", tl: tl)])
+        XCTAssertEqual(fixture.recorder.differences, [])
+    }
+
+
+    /// A channel that is not server-side is dropped before it is decoded, so an undecodable body never asks for a difference.
+    func testServerSidePublicationOnAnyOtherChannelIsDroppedWithoutDifference() throws {
+        let fixture: Fixture = try makeFixture()
+        let undecodable: Data = Data("not json".utf8)
+        let channels: [String] = [
+            "user:5",
+            "channel:9",
+            "identity:abc",
+            "session",
+            "sessionx:5:77",
+            "system",
+            "system:config2",
+            "unknown:1",
+        ]
+
+        for channel: String in channels {
+            fixture.realtime.handleServerPublication(channel: channel, data: undecodable)
+        }
+
+        XCTAssertEqual(fixture.recorder.updates, [])
+        XCTAssertEqual(fixture.recorder.differences, [])
+    }
+
+
+    /// An explicit `pts: 0` and `ptsCount: 0` is a pts-less frame: it is delivered, and it moves no position.
+    func testServerSidePublicationWithZeroPtsIsDeliveredWithoutDifference() throws {
+        let fixture: Fixture = try makeFixture()
+        let constructor: ImpulseMappingConstructor = try XCTUnwrap(fixture.mapping.constructor(id: 1957577280))
+        let tl: [UInt8] = try ImpulseTlSynth(mapping: fixture.mapping).constructorTl(constructor: constructor, allFlags: false)
+        let proto: [UInt8] = try fixture.transcoder.tlObjectToProto(typeName: ImpulseRealtime.updatesTypeName, tl: tl)
+        let text: String = "{\"type\":9,\"pts\":0,\"ptsCount\":0,\"date\":1700000000,\"data\":\"" + Data(proto).base64EncodedString() + "\"}"
+
+        fixture.realtime.handleServerPublication(channel: "session:5:77", data: Data(text.utf8))
+
+        XCTAssertEqual(fixture.recorder.updates, [ImpulseRealtimeUpdates(channel: "session:5:77", tl: tl)])
+        XCTAssertEqual(fixture.recorder.differences, [])
+    }
+
+
+    /// The reconnect itself requests nothing: the difference waits for the user lane, and touches no lane.
+    func testReconnectRequestsNothingAndTouchesNoLane() throws {
+        let fixture: Fixture = try makeFixture()
+
+        fixture.realtime.handleReconnected()
+
+        XCTAssertEqual(fixture.recorder.differences, [])
+        XCTAssertEqual(fixture.socket.calls, [])
+    }
+
+
+    func testReconnectThenRecoveredUserLaneRequestsOneSocketReconnectedDifference() throws {
+        let fixture: Fixture = try makeFixture()
+
+        fixture.realtime.handleReconnected()
+        fixture.realtime.handleSubscribed(channel: "user:5", recovered: true, wasRecovering: true)
+        fixture.realtime.handleSubscribed(channel: "user:5", recovered: true, wasRecovering: true)
+
+        XCTAssertEqual(fixture.recorder.differences, [.account(.socketReconnected)])
+    }
+
+
+    func testReconnectThenUnrecoveredUserLaneRequestsOneNotRecoveredDifference() throws {
+        let fixture: Fixture = try makeFixture()
+
+        fixture.realtime.handleReconnected()
+        fixture.realtime.handleSubscribed(channel: "user:5", recovered: false, wasRecovering: true)
+
+        XCTAssertEqual(fixture.recorder.differences, [.account(.subscribeNotRecovered)])
+    }
+
+
+    func testFirstConnectRecoveredUserLaneRequestsNoDifference() throws {
+        let fixture: Fixture = try makeFixture()
+
+        fixture.realtime.handleSubscribed(channel: "user:5", recovered: true, wasRecovering: true)
+
+        XCTAssertEqual(fixture.recorder.differences, [])
+    }
 }

@@ -88,4 +88,56 @@ final class ImpulseGapTrackerTests: XCTestCase {
         tracker.onUnsubscribed(channel: "session:5:77", code: 2502)
         XCTAssertTrue(tracker.onSubscribed(channel: "session:5:77", recovered: true, wasRecovering: true))
     }
+
+
+    func testFirstConnectIsNotAReconnectDifference() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        XCTAssertNil(tracker.differenceReason(channel: "user:5", recovered: true, wasRecovering: true))
+    }
+
+
+    func testReconnectThenRecoveredUserLaneNeedsOneSocketReconnectedDifference() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        tracker.onReconnected()
+        XCTAssertEqual(
+            tracker.differenceReason(channel: "user:5", recovered: true, wasRecovering: true),
+            ImpulseDifferenceReason.socketReconnected
+        )
+        XCTAssertNil(tracker.differenceReason(channel: "user:5", recovered: true, wasRecovering: true))
+    }
+
+
+    func testReconnectThenUnrecoveredUserLaneNeedsOneNotRecoveredDifference() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        tracker.onReconnected()
+        XCTAssertEqual(
+            tracker.differenceReason(channel: "user:5", recovered: false, wasRecovering: true),
+            ImpulseDifferenceReason.subscribeNotRecovered
+        )
+        XCTAssertNil(tracker.differenceReason(channel: "user:5", recovered: true, wasRecovering: true))
+    }
+
+
+    func testReconnectIsNotSpentByChannelOrSessionLanes() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        tracker.onReconnected()
+        XCTAssertNil(tracker.differenceReason(channel: "channel:9", recovered: true, wasRecovering: true))
+        XCTAssertNil(tracker.differenceReason(channel: "session:5:77", recovered: true, wasRecovering: true))
+        XCTAssertEqual(
+            tracker.differenceReason(channel: "user:5", recovered: true, wasRecovering: true),
+            ImpulseDifferenceReason.socketReconnected
+        )
+    }
+
+
+    func testDroppedUserLaneAfterReconnectIsPositionDroppedOnce() {
+        let tracker: ImpulseGapTracker = ImpulseGapTracker()
+        tracker.onReconnected()
+        tracker.onUnsubscribed(channel: "user:5", code: 2502)
+        XCTAssertEqual(
+            tracker.differenceReason(channel: "user:5", recovered: true, wasRecovering: true),
+            ImpulseDifferenceReason.subscribePositionDropped
+        )
+        XCTAssertNil(tracker.differenceReason(channel: "user:5", recovered: true, wasRecovering: true))
+    }
 }

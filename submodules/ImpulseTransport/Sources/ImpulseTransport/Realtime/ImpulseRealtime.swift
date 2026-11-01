@@ -9,6 +9,9 @@ public enum ImpulseDifferenceReason: String, Equatable, Sendable {
     case publicationDecodeFailed = "publication_decode_failed"
     case publicationUnexpectedConstructor = "publication_unexpected_constructor"
     case updatesTooLong = "updates_too_long"
+    /// The update socket reconnected and the user lane came back recovered without a dropped position. The session and system
+    /// lanes have no recovery, so their updates from the gap are fetched here. The Android realtime client uses the same string.
+    case socketReconnected = "socket_reconnected"
 }
 
 
@@ -53,6 +56,15 @@ public protocol ImpulseRealtimeSocketListener: AnyObject {
         channel: String,
         data: Data
     )
+
+    /// A publication the server sends to the connection itself, on a lane the client never subscribes to.
+    func handleServerPublication(
+        channel: String,
+        data: Data
+    )
+
+    /// The update socket connected again after a connection it had before.
+    func handleReconnected()
 }
 
 
@@ -302,9 +314,7 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
         recovered: Bool,
         wasRecovering: Bool
     ) {
-        let needsDifference: Bool = gaps.onSubscribed(channel: channel, recovered: recovered, wasRecovering: wasRecovering)
-        if needsDifference {
-            let reason: ImpulseDifferenceReason = recovered ? .subscribePositionDropped : .subscribeNotRecovered
+        if let reason: ImpulseDifferenceReason = gaps.differenceReason(channel: channel, recovered: recovered, wasRecovering: wasRecovering) {
             requestDifference(channel: channel, reason: reason)
         }
 
@@ -338,6 +348,29 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
         case .envelope(let envelope):
             decode(channel: channel, envelope: envelope)
         }
+    }
+
+
+    /// Routes a server-side publication. Only the session lanes and the system config lane are accepted; any other channel
+    /// is dropped with a trace, and never asks for a difference. These lanes have no gap tracking: the server keeps no
+    /// recovery for them, and the account difference covers what was missed.
+    public func handleServerPublication(
+        channel: String,
+        data: Data
+    ) {
+        guard ImpulseLaneRouter.isServerSideLane(channel) else {
+            ImpulseDiagnostics.log("Dropped a server-side publication on channel \(channel)")
+            return
+        }
+
+        handlePublication(channel: channel, data: data)
+    }
+
+
+    /// Hands a reconnect of the update socket to the gap tracker. The account difference is requested by the first user lane
+    /// subscribe after it, so it runs once the user lane is back, and only once per reconnect.
+    public func handleReconnected() {
+        gaps.onReconnected()
     }
 
 
@@ -505,17 +538,45 @@ public final class ImpulseRealtime: ImpulseRealtimeSocketListener {
 }
 
 
-/// The socket of the realtime client on a SwiftCentrifuge client: the connection, and one subscription per lane.
-public final class ImpulseCentrifugeSocket: ImpulseRealtimeSocket {
+/// The socket of the realtime client on a SwiftCentrifuge client: the connection, one subscription per lane, and the
+/// server-side publications of the connection.
+public final class ImpulseCentrifugeSocket: ImpulseRealtimeSocket, CentrifugeClientDelegate {
     public weak var listener: (any ImpulseRealtimeSocketListener)?
 
     private let client: CentrifugeClient
     private let lock: NSLock = NSLock()
     private var bridges: [String: ImpulseSubscriptionBridge] = [:]
+    private var connectedOnce: Bool = false
 
 
+    /// The socket becomes the delegate of the client: the update client is created without one, so nothing else receives its
+    /// connection events or its server-side publications.
     public init(client: CentrifugeClient) {
         self.client = client
+        client.delegate = self
+    }
+
+
+    public func onConnected(
+        _ client: CentrifugeClient,
+        _ event: CentrifugeConnectedEvent
+    ) {
+        lock.lock()
+        let reconnected: Bool = connectedOnce
+        connectedOnce = true
+        lock.unlock()
+
+        if reconnected {
+            deliverReconnected()
+        }
+    }
+
+
+    public func onPublication(
+        _ client: CentrifugeClient,
+        _ event: CentrifugeServerPublicationEvent
+    ) {
+        deliverServerPublication(channel: event.channel, data: event.data)
     }
 
 
@@ -599,6 +660,19 @@ public final class ImpulseCentrifugeSocket: ImpulseRealtimeSocket {
         data: Data
     ) {
         listener?.handlePublication(channel: channel, data: data)
+    }
+
+
+    internal func deliverServerPublication(
+        channel: String,
+        data: Data
+    ) {
+        listener?.handleServerPublication(channel: channel, data: data)
+    }
+
+
+    internal func deliverReconnected() {
+        listener?.handleReconnected()
     }
 }
 
