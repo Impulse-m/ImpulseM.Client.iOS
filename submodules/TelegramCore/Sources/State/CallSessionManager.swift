@@ -359,17 +359,19 @@ private func parseConnection(_ apiConnection: Api.PhoneConnection) -> CallSessio
 }
 
 public struct CallSessionConnectionSet {
-    public let primary: CallSessionConnection
+    // nil when the server sends no connections, which is always the case under LiveKit
+    public let primary: CallSessionConnection?
     public let alternatives: [CallSessionConnection]
 
-    public init(primary: CallSessionConnection, alternatives: [CallSessionConnection]) {
+    public init(primary: CallSessionConnection?, alternatives: [CallSessionConnection]) {
         self.primary = primary
         self.alternatives = alternatives
     }
 }
 
-private func parseConnectionSet(primary: Api.PhoneConnection, alternative: [Api.PhoneConnection]) -> CallSessionConnectionSet {
-    return CallSessionConnectionSet(primary: parseConnection(primary), alternatives: alternative.map { parseConnection($0) })
+private func parseConnectionSet(apiConnections: [Api.PhoneConnection]) -> CallSessionConnectionSet {
+    let connections: [CallSessionConnection] = apiConnections.map { parseConnection($0) }
+    return CallSessionConnectionSet(primary: connections.first, alternatives: Array(connections.dropFirst()))
 }
 
 private final class CallSessionContext {
@@ -1231,7 +1233,7 @@ private final class CallSessionManagerContext {
                                                 let isVideoPossible = self.videoVersions().contains(where: { versions.contains($0) })
                                                 context.isVideoPossible = isVideoPossible
 
-                                                context.state = .active(id: id, accessHash: accessHash, beginTimestamp: startDate, key: key, keyId: calculatedKeyId, keyVisualHash: keyVisualHash, connections: parseConnectionSet(primary: connections.first!, alternative: Array(connections[1...])), maxLayer: maxLayer, version: versions[0], customParameters: customParametersValue, allowsP2P: allowsP2P, supportsConferenceCalls: supportsConferenceCalls)
+                                                context.state = .active(id: id, accessHash: accessHash, beginTimestamp: startDate, key: key, keyId: calculatedKeyId, keyVisualHash: keyVisualHash, connections: parseConnectionSet(apiConnections: connections), maxLayer: maxLayer, version: versions[0], customParameters: customParametersValue, allowsP2P: allowsP2P, supportsConferenceCalls: supportsConferenceCalls)
                                                 self.contextUpdated(internalId: internalId)
                                             } else {
                                                 self.drop(internalId: internalId, reason: .disconnect, debugLog: .single(nil))
@@ -1253,7 +1255,7 @@ private final class CallSessionManagerContext {
                                         let isVideoPossible = self.videoVersions().contains(where: { versions.contains($0) })
                                         context.isVideoPossible = isVideoPossible
 
-                                        context.state = .active(id: id, accessHash: accessHash, beginTimestamp: startDate, key: key, keyId: keyId, keyVisualHash: keyVisualHash, connections: parseConnectionSet(primary: connections.first!, alternative: Array(connections[1...])), maxLayer: maxLayer, version: versions[0], customParameters: customParametersValue, allowsP2P: allowsP2P, supportsConferenceCalls: supportsConferenceCalls)
+                                        context.state = .active(id: id, accessHash: accessHash, beginTimestamp: startDate, key: key, keyId: keyId, keyVisualHash: keyVisualHash, connections: parseConnectionSet(apiConnections: connections), maxLayer: maxLayer, version: versions[0], customParameters: customParametersValue, allowsP2P: allowsP2P, supportsConferenceCalls: supportsConferenceCalls)
                                         self.contextUpdated(internalId: internalId)
                                     } else {
                                         self.drop(internalId: internalId, reason: .disconnect, debugLog: .single(nil))
@@ -1643,7 +1645,7 @@ private func acceptCallSession(accountPeerId: PeerId, postbox: Postbox, network:
                                         if !versions.isEmpty {
                                             let customParametersValue: String? = callSessionCustomParameters(customParameters)
 
-                                            return .success(.call(config: config, gA: gAOrB.makeData(), timestamp: startDate, connections: parseConnectionSet(primary: connections.first!, alternative: Array(connections[1...])), maxLayer: maxLayer, version: versions[0], customParameters: customParametersValue, allowsP2P: (flags & (1 << 5)) != 0, supportsConferenceCalls: (flags & (1 << 8)) != 0))
+                                            return .success(.call(config: config, gA: gAOrB.makeData(), timestamp: startDate, connections: parseConnectionSet(apiConnections: connections), maxLayer: maxLayer, version: versions[0], customParameters: customParametersValue, allowsP2P: (flags & (1 << 5)) != 0, supportsConferenceCalls: (flags & (1 << 8)) != 0))
                                         } else {
                                             return .failed
                                         }

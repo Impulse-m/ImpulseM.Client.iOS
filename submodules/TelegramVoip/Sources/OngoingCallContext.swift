@@ -985,7 +985,11 @@ public final class OngoingCallContext {
                 }
                 
                 let unfilteredConnections: [CallSessionConnection]
-                unfilteredConnections = [connections.primary] + connections.alternatives
+                if let primary = connections.primary {
+                    unfilteredConnections = [primary] + connections.alternatives
+                } else {
+                    unfilteredConnections = connections.alternatives
+                }
 
                 var reflectorIdList: [Int64] = []
                 for connection in unfilteredConnections {
