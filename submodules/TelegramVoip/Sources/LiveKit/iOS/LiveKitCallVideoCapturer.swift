@@ -18,6 +18,8 @@ public final class LiveKitCallVideoCapturer: LiveKitPrivateVideoCapturer {
     private var track: LocalVideoTrack?
     private var trackTask: Task<LocalVideoTrack?, Never>?
     private var switchTicket: UInt64 = 0
+    private var isEnabled: Bool = true
+    private var isStopped: Bool = false
 
 
     /// A camera capturer for the front or the back camera. The camera track is created on first use.
@@ -31,7 +33,13 @@ public final class LiveKitCallVideoCapturer: LiveKitPrivateVideoCapturer {
     /// The camera track as a publishable value, created on first use. Nil when the track cannot be created.
     @MainActor
     public func makeLocalVideoTrack() async -> LiveKitLocalVideoTrack? {
+        guard !self.isStopped else {
+            return nil
+        }
         guard let track: LocalVideoTrack = await self.ensureTrack() else {
+            return nil
+        }
+        guard !self.isStopped else {
             return nil
         }
         return LiveKitCallLocalCameraTrack(sdkTrack: track)
@@ -73,10 +81,11 @@ public final class LiveKitCallVideoCapturer: LiveKitPrivateVideoCapturer {
     /// The camera track is created first if it does not exist yet, so the change takes effect after that.
     public func setIsVideoEnabled(_ isEnabled: Bool) {
         Task { @MainActor in
+            self.isEnabled = isEnabled
             guard let track: LocalVideoTrack = await self.ensureTrack() else {
                 return
             }
-            if isEnabled {
+            if self.isEnabled && !self.isStopped {
                 _ = try? await track.start()
                 _ = try? await track.unmute()
             } else {
@@ -84,6 +93,33 @@ public final class LiveKitCallVideoCapturer: LiveKitPrivateVideoCapturer {
                 _ = try? await track.stop()
             }
         }
+    }
+
+
+    /// Stops the camera capture for good. A preview or an enable made after this does not start the camera again.
+    public func stop() {
+        Task { @MainActor in
+            self.isStopped = true
+            guard self.track != nil || self.trackTask != nil else {
+                return
+            }
+            guard let track: LocalVideoTrack = await self.ensureTrack() else {
+                return
+            }
+            _ = try? await track.mute()
+            _ = try? await track.stop()
+        }
+    }
+
+
+    /// Mutes and stops the published track again while the capture is paused or stopped, because publishing starts the track.
+    @MainActor
+    public func syncEnabledState() async {
+        guard !self.isEnabled || self.isStopped, let track: LocalVideoTrack = self.track else {
+            return
+        }
+        _ = try? await track.mute()
+        _ = try? await track.stop()
     }
 
 
@@ -116,13 +152,15 @@ public final class LiveKitCallVideoCapturer: LiveKitPrivateVideoCapturer {
     }
 
 
-    /// Returns the local track started for a preview. An unpublish stops the track, so a preview starts it again.
+    /// Returns the local track started for a preview. The track is started only while the capturer is enabled and not stopped.
     @MainActor
     private func previewTrack() async -> LocalVideoTrack? {
         guard let track: LocalVideoTrack = await self.ensureTrack() else {
             return nil
         }
-        _ = try? await track.start()
+        if self.isEnabled && !self.isStopped {
+            _ = try? await track.start()
+        }
         return track
     }
 

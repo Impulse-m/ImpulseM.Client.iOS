@@ -99,7 +99,7 @@ extension LiveKitMediaEncryptionState {
 @MainActor
 public final class LiveKitCallContext: LiveKitRoomEventSink {
     /// The only call protocol offered and accepted for 1:1 LiveKit calls.
-    public static let protocolName: String = "impulsem-livekit-1"
+    public nonisolated static let protocolName: String = "impulsem-livekit-1"
 
     /// Seconds allowed for the join after the call is accepted: 30 seconds plus 5 seconds of slack.
     public static let joinDeadlineSeconds: TimeInterval = 35

@@ -14,6 +14,15 @@ public protocol LiveKitPrivateVideoCapturer: AnyObject {
     var videoKind: LiveKitPrivateVideoKind { get }
 
     @MainActor func makeLocalVideoTrack() async -> LiveKitLocalVideoTrack?
+    /// Brings the track in line with the capturer state after it is published, because publishing starts the track.
+    @MainActor func syncEnabledState() async
+}
+
+
+extension LiveKitPrivateVideoCapturer {
+    @MainActor
+    public func syncEnabledState() async {
+    }
 }
 
 
@@ -224,6 +233,7 @@ public final class LiveKitPrivateCall {
                     return
                 }
                 try await media.publishCamera(track)
+                await capturer.syncEnabledState()
 
             case .screen:
                 try await media.unpublishCamera()

@@ -62,6 +62,7 @@ public final class PresentationCallImpl: PresentationCall {
     private var ongoingContextIsFailedDisposable: Disposable?
     private var ongoingContextIsDroppedDisposable: Disposable?
     private var didDropCall = false
+    private var isOutgoingVideoPaused = false
     private var requestedVideoAspect: Float?
     private var reception: Int32?
     private var receptionDisposable: Disposable?
@@ -1322,6 +1323,9 @@ public final class PresentationCallImpl: PresentationCall {
 #endif
                 }
             case .dropping:
+#if os(iOS)
+                self.liveKitCameraCapturer?.stop()
+#endif
                 break
             default:
                 self.audioSessionShouldBeActive.set(false)
@@ -1465,7 +1469,7 @@ public final class PresentationCallImpl: PresentationCall {
         }
     }
     
-    private func handleOngoingCallContextState(_ contextState: OngoingCallContextState) {
+    private func handleOngoingCallContextState(_ contextState: OngoingCallContextState?) {
         if let sessionState = self.sessionState {
             self.updateSessionState(sessionState: sessionState, callContextState: contextState, reception: self.reception, audioSessionControl: self.audioSessionControl)
         } else {
@@ -1490,7 +1494,8 @@ public final class PresentationCallImpl: PresentationCall {
         var initialVideo: LiveKitPrivateVideoCapturer?
         if self.videoCapturer != nil {
             self.videoCapturer = nil
-            let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? LiveKitCallVideoCapturer(isFrontCamera: self.useFrontCamera)
+            let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? self.makeLiveKitCameraCapturer()
+            liveKitCameraCapturer.setIsVideoEnabled(!self.isOutgoingVideoPaused)
             self.liveKitCameraCapturer = liveKitCameraCapturer
             initialVideo = liveKitCameraCapturer
             self.outgoingVideoPromise.set(liveKitCameraCapturer.video())
@@ -1523,13 +1528,20 @@ public final class PresentationCallImpl: PresentationCall {
     private func stopLiveKitOngoingContext() {
         self.liveKitStartDisposable?.dispose()
         self.liveKitStartDisposable = nil
+        self.liveKitCameraCapturer?.stop()
         self.liveKitOngoingContext?.stop()
     }
 
     private func requestLiveKitCameraVideo(_ liveKitOngoingContext: LiveKitOngoingCallContext) {
-        let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? LiveKitCallVideoCapturer(isFrontCamera: self.useFrontCamera)
+        let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? self.makeLiveKitCameraCapturer()
         self.liveKitCameraCapturer = liveKitCameraCapturer
         liveKitOngoingContext.requestVideo(liveKitCameraCapturer)
+    }
+
+    private func makeLiveKitCameraCapturer() -> LiveKitCallVideoCapturer {
+        let liveKitCameraCapturer: LiveKitCallVideoCapturer = LiveKitCallVideoCapturer(isFrontCamera: self.useFrontCamera)
+        liveKitCameraCapturer.setIsVideoEnabled(!self.isOutgoingVideoPaused)
+        return liveKitCameraCapturer
     }
 #endif
 
@@ -1745,6 +1757,7 @@ public final class PresentationCallImpl: PresentationCall {
         }
 #if os(iOS)
         if let liveKitOngoingContext = self.liveKitOngoingContext {
+            self.liveKitCameraCapturer?.stop()
             self.liveKitCameraCapturer = nil
             self.outgoingVideoPromise.set(.never())
             liveKitOngoingContext.disableVideo()
@@ -1871,6 +1884,7 @@ public final class PresentationCallImpl: PresentationCall {
         if self.isMovedToConference {
             return
         }
+        self.isOutgoingVideoPaused = isPaused
         self.videoCapturer?.setIsVideoEnabled(!isPaused)
 #if os(iOS)
         self.liveKitCameraCapturer?.setIsVideoEnabled(!isPaused)
@@ -1978,7 +1992,7 @@ public final class PresentationCallImpl: PresentationCall {
         }
 #if os(iOS)
         if self.liveKitOngoingContext != nil {
-            let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? LiveKitCallVideoCapturer(isFrontCamera: self.useFrontCamera)
+            let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? self.makeLiveKitCameraCapturer()
             self.liveKitCameraCapturer = liveKitCameraCapturer
             liveKitCameraCapturer.makeOutgoingVideoView(completion: { view in
                 if let view = view {
