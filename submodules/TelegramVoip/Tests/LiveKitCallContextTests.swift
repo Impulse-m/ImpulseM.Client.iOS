@@ -29,6 +29,7 @@ private enum FakeMediaCall: Equatable {
     case noiseSuppression(Bool)
     case camera(Bool)
     case publishCamera
+    case unpublishCamera
     case publishScreenShare
     case unpublishScreenShare
     case audioInput(String)
@@ -52,10 +53,18 @@ private final class FakeRemoteVideoTrack: LiveKitGroupRemoteVideoTrack {
 
 private final class FakeRemotePublication: LiveKitGroupRemotePublication {
     let videoTrack: LiveKitGroupRemoteVideoTrack?
+    let source: LiveKitRemoteVideoSource
+    let isMuted: Bool
 
 
-    init(videoTrack: LiveKitGroupRemoteVideoTrack?) {
+    init(
+        videoTrack: LiveKitGroupRemoteVideoTrack?,
+        source: LiveKitRemoteVideoSource = .camera,
+        isMuted: Bool = false
+    ) {
         self.videoTrack = videoTrack
+        self.source = source
+        self.isMuted = isMuted
     }
 
 
@@ -71,14 +80,17 @@ private final class FakeRemotePublication: LiveKitGroupRemotePublication {
 private final class FakeRemoteParticipant: LiveKitGroupRemoteParticipant {
     let identity: String?
     let videoPublications: [LiveKitGroupRemotePublication]
+    let isAudioActive: Bool
 
 
     init(
         identity: String?,
-        videoPublications: [LiveKitGroupRemotePublication]
+        videoPublications: [LiveKitGroupRemotePublication],
+        isAudioActive: Bool = false
     ) {
         self.identity = identity
         self.videoPublications = videoPublications
+        self.isAudioActive = isAudioActive
     }
 }
 
@@ -192,6 +204,11 @@ private final class FakeLiveKitRoomSession: LiveKitCallRoomSession, @unchecked S
 
     func publishCamera(_ track: LiveKitLocalVideoTrack) async throws {
         record(.publishCamera)
+    }
+
+
+    func unpublishCamera() async throws {
+        record(.unpublishCamera)
     }
 
 
@@ -513,6 +530,7 @@ final class LiveKitCallContextTests: XCTestCase {
         try await media.setCameraEnabled(true)
         try await media.publishScreenShare(FakeLocalVideoTrack())
         try await media.unpublishScreenShare()
+        try await media.unpublishCamera()
         try await media.setAudioInputDevice(id: "input-device")
         try await media.setAudioOutputDevice(id: "output-device")
         XCTAssertEqual(session.mediaCalls, [
@@ -521,6 +539,7 @@ final class LiveKitCallContextTests: XCTestCase {
             .camera(true),
             .publishScreenShare,
             .unpublishScreenShare,
+            .unpublishCamera,
             .audioInput("input-device"),
             .audioOutput("output-device")
         ])

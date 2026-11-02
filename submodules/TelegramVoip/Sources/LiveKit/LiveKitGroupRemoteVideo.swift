@@ -29,6 +29,14 @@ public struct LiveKitGroupVideoRequest: Equatable {
 }
 
 
+/// The source of a remote video publication: a camera, a screen share, or any other source.
+public enum LiveKitRemoteVideoSource {
+    case camera
+    case screenShare
+    case other
+}
+
+
 /// A remote video track of a group participant. The SDK track sits behind this seam, so tests can use fakes.
 public protocol LiveKitGroupRemoteVideoTrack: AnyObject {
     /// The SDK track behind this value, or nil when the value is not backed by one.
@@ -40,6 +48,12 @@ public protocol LiveKitGroupRemoteVideoTrack: AnyObject {
 public protocol LiveKitGroupRemotePublication: AnyObject {
     /// The subscribed video track, or nil while the publication has no track.
     var videoTrack: LiveKitGroupRemoteVideoTrack? { get }
+
+    /// The source of the publication, as the publisher declared it.
+    var source: LiveKitRemoteVideoSource { get }
+
+    /// Whether the publisher has muted the publication.
+    var isMuted: Bool { get }
 
     /// Enables or disables the server from sending the video of this publication.
     func setEnabled(_ isEnabled: Bool) async throws
@@ -56,6 +70,9 @@ public protocol LiveKitGroupRemoteParticipant: AnyObject {
 
     /// The video publications of the participant, in a stable order.
     var videoPublications: [LiveKitGroupRemotePublication] { get }
+
+    /// True when the participant has a subscribed audio publication that is not muted.
+    var isAudioActive: Bool { get }
 }
 
 
@@ -174,6 +191,22 @@ private extension LiveKitGroupVideoQuality {
 }
 
 
+private extension Track.Source {
+    var remoteVideoSource: LiveKitRemoteVideoSource {
+        switch self {
+        case .camera:
+            return .camera
+
+        case .screenShareVideo:
+            return .screenShare
+
+        default:
+            return .other
+        }
+    }
+}
+
+
 /// Wraps a LiveKit remote participant. Its publications are read when they are asked for, so the wrapper always shows the room state.
 private final class LiveKitGroupSDKRemoteParticipant: LiveKitGroupRemoteParticipant {
     private let participant: RemoteParticipant
@@ -203,6 +236,13 @@ private final class LiveKitGroupSDKRemoteParticipant: LiveKitGroupRemoteParticip
             return LiveKitGroupSDKRemotePublication(publication: publication)
         }
     }
+
+
+    var isAudioActive: Bool {
+        return participant.audioTracks.contains { (publication: TrackPublication) -> Bool in
+            return publication.track != nil && !publication.isMuted
+        }
+    }
 }
 
 
@@ -218,6 +258,16 @@ private final class LiveKitGroupSDKRemotePublication: LiveKitGroupRemotePublicat
 
     var videoTrack: LiveKitGroupRemoteVideoTrack? {
         return publication.track as? RemoteVideoTrack
+    }
+
+
+    var source: LiveKitRemoteVideoSource {
+        return publication.source.remoteVideoSource
+    }
+
+
+    var isMuted: Bool {
+        return publication.isMuted
     }
 
 

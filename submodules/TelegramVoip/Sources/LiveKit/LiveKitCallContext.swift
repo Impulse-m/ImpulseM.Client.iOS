@@ -386,6 +386,39 @@ private final class LiveKitRoomDelegateBridge: NSObject, RoomDelegate, @unchecke
             self?.sink?.roomRemoteTracksDidChange()
         }
     }
+
+
+    @objc(room:remoteParticipant:didPublishTrack:)
+    func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) {
+        Task { @MainActor [weak self] in
+            self?.sink?.roomRemoteTracksDidChange()
+        }
+    }
+
+
+    @objc(room:remoteParticipant:didUnpublishTrack:)
+    func room(_ room: Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) {
+        Task { @MainActor [weak self] in
+            self?.sink?.roomRemoteTracksDidChange()
+        }
+    }
+
+
+    func room(_ room: Room, participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool) {
+        guard trackPublication is RemoteTrackPublication else {
+            return
+        }
+        Task { @MainActor [weak self] in
+            self?.sink?.roomRemoteTracksDidChange()
+        }
+    }
+
+
+    func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
+        Task { @MainActor [weak self] in
+            self?.sink?.roomRemoteTracksDidChange()
+        }
+    }
 }
 
 
@@ -463,6 +496,11 @@ private final class LiveKitSDKRoomSession: LiveKitCallRoomSession {
 
     func publishCamera(_ track: LiveKitLocalVideoTrack) async throws {
         try await roomMedia.publishCamera(track)
+    }
+
+
+    func unpublishCamera() async throws {
+        try await roomMedia.unpublishCamera()
     }
 
 

@@ -21,12 +21,20 @@ private final class FakeRemoteVideoTrack: LiveKitGroupRemoteVideoTrack {
 /// Records every call made on it. A call throws `errorToThrow` when it is set, and a throwing call records nothing.
 private final class FakeRemotePublication: LiveKitGroupRemotePublication {
     let videoTrack: LiveKitGroupRemoteVideoTrack?
+    let source: LiveKitRemoteVideoSource
+    let isMuted: Bool
     var errorToThrow: Error?
     private(set) var calls: [FakeRemotePublicationCall] = []
 
 
-    init(videoTrack: LiveKitGroupRemoteVideoTrack?) {
+    init(
+        videoTrack: LiveKitGroupRemoteVideoTrack?,
+        source: LiveKitRemoteVideoSource = .camera,
+        isMuted: Bool = false
+    ) {
         self.videoTrack = videoTrack
+        self.source = source
+        self.isMuted = isMuted
     }
 
 
@@ -51,14 +59,17 @@ private final class FakeRemotePublication: LiveKitGroupRemotePublication {
 private final class FakeRemoteParticipant: LiveKitGroupRemoteParticipant {
     let identity: String?
     let videoPublications: [LiveKitGroupRemotePublication]
+    let isAudioActive: Bool
 
 
     init(
         identity: String?,
-        videoPublications: [LiveKitGroupRemotePublication]
+        videoPublications: [LiveKitGroupRemotePublication],
+        isAudioActive: Bool = false
     ) {
         self.identity = identity
         self.videoPublications = videoPublications
+        self.isAudioActive = isAudioActive
     }
 }
 

@@ -57,10 +57,13 @@ public final class OngoingCallContextPresentationCallVideoView {
 
 
 /// The local video of a call: the camera selected by `deviceId`, or a macOS screen share. The track is built by `LiveKitVideoSources`.
-public final class OngoingCallVideoCapturer {
+public final class OngoingCallVideoCapturer: LiveKitPrivateVideoCapturer {
     public private(set) var deviceId: String
     public let captureCode: LiveKitCaptureCode
     public private(set) var track: LocalVideoTrack?
+    public var videoKind: LiveKitPrivateVideoKind {
+        return self.captureCode == .screen ? .screen : .camera
+    }
     private var onFatalError: (() -> Void)?
     private var onPause: ((Bool) -> Void)?
     private var trackTask: Task<LocalVideoTrack?, Never>?

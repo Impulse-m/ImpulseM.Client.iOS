@@ -16,13 +16,16 @@ public protocol LiveKitRoomMedia: AnyObject {
     /// Turns the noise suppression of the microphone on or off.
     func setNoiseSuppressionEnabled(_ isEnabled: Bool) async throws
 
-    /// Enables or disables the camera. Disabling mutes it; the publication stays in the room.
+    /// Enables or disables the camera. Disabling mutes the existing camera publication, which stays in the room. When no camera publication exists, enabling publishes one with the default camera track.
     func setCameraEnabled(_ isEnabled: Bool) async throws
 
-    /// Publishes the camera track the call capturer owns. A camera publication that already exists is replaced, so only one camera is published.
+    /// Publishes the camera track the call capturer owns. Existing camera publications are removed first, so only one camera is published. Screen share publications are not touched.
     func publishCamera(_ track: LiveKitLocalVideoTrack) async throws
 
-    /// Publishes the screen share track. Screen share audio is never published.
+    /// Removes every camera publication from the room. Does nothing when none exists. Screen share publications are not touched.
+    func unpublishCamera() async throws
+
+    /// Publishes the screen share track. Existing screen share publications are removed first, so only one screen share is published. Screen share audio is never published. Camera publications are not touched.
     func publishScreenShare(_ track: LiveKitLocalVideoTrack) async throws
 
     /// Removes the screen share publication from the room.

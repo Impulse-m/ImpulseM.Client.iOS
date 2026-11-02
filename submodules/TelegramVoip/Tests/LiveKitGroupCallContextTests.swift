@@ -65,12 +65,20 @@ private final class FakeGroupRemoteVideoTrack: LiveKitGroupRemoteVideoTrack {
 /// A remote video publication of a fake participant. It records the enable flags and the qualities it receives.
 private final class FakeGroupRemotePublication: LiveKitGroupRemotePublication, @unchecked Sendable {
     let videoTrack: LiveKitGroupRemoteVideoTrack?
+    let source: LiveKitRemoteVideoSource
+    let isMuted: Bool
     private(set) var enabledCalls: [Bool] = []
     private(set) var qualityCalls: [LiveKitGroupVideoQuality] = []
 
 
-    init(videoTrack: LiveKitGroupRemoteVideoTrack? = nil) {
+    init(
+        videoTrack: LiveKitGroupRemoteVideoTrack? = nil,
+        source: LiveKitRemoteVideoSource = .camera,
+        isMuted: Bool = false
+    ) {
         self.videoTrack = videoTrack
+        self.source = source
+        self.isMuted = isMuted
     }
 
 
@@ -89,14 +97,17 @@ private final class FakeGroupRemotePublication: LiveKitGroupRemotePublication, @
 private final class FakeGroupRemoteParticipant: LiveKitGroupRemoteParticipant {
     let identity: String?
     let videoPublications: [LiveKitGroupRemotePublication]
+    let isAudioActive: Bool
 
 
     init(
         identity: String?,
-        videoPublications: [LiveKitGroupRemotePublication]
+        videoPublications: [LiveKitGroupRemotePublication],
+        isAudioActive: Bool = false
     ) {
         self.identity = identity
         self.videoPublications = videoPublications
+        self.isAudioActive = isAudioActive
     }
 }
 

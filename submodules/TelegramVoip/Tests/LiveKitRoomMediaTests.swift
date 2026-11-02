@@ -9,6 +9,7 @@ enum FakeLiveKitRoomMediaCall: Equatable {
     case setNoiseSuppressionEnabled(Bool)
     case setCameraEnabled(Bool)
     case publishCamera
+    case unpublishCamera
     case publishScreenShare
     case unpublishScreenShare
     case setAudioInputDevice(String)
@@ -98,6 +99,12 @@ final class FakeLiveKitRoomMedia: LiveKitRoomMedia {
     }
 
 
+    func unpublishCamera() async throws {
+        try throwIfNeeded()
+        calls.append(.unpublishCamera)
+    }
+
+
     func publishScreenShare(_ track: LiveKitLocalVideoTrack) async throws {
         try throwIfNeeded()
         calls.append(.publishScreenShare)
@@ -169,6 +176,16 @@ final class LiveKitRoomMediaTests: XCTestCase {
         try await media.unpublishScreenShare()
 
         XCTAssertEqual(media.calls, [.publishScreenShare, .unpublishScreenShare])
+    }
+
+
+    func testCameraUnpublishRecordsCallAndLeavesScreenShareAlone() async throws {
+        let media: FakeLiveKitRoomMedia = FakeLiveKitRoomMedia()
+
+        try await media.publishScreenShare(FakeLiveKitLocalVideoTrack())
+        try await media.unpublishCamera()
+
+        XCTAssertEqual(media.calls, [.publishScreenShare, .unpublishCamera])
     }
 
 

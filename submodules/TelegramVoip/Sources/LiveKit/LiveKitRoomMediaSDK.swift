@@ -90,13 +90,13 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
             throw LiveKitRoomMediaError.trackHasNoSdkTrack
         }
         let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .back, isGroupCall: isGroupCall, prioritizeVP8: prioritizeVP8)
-        let cameraPublications: [LocalTrackPublication] = localParticipant.localVideoTracks.filter { (publication: LocalTrackPublication) -> Bool in
-            return publication.source == .camera
-        }
-        for publication: LocalTrackPublication in cameraPublications {
-            try await localParticipant.unpublish(publication: publication)
-        }
+        try await unpublishVideos(source: .camera)
         try await localParticipant.publish(videoTrack: sdkTrack, options: publishOptions)
+    }
+
+
+    func unpublishCamera() async throws {
+        try await unpublishVideos(source: .camera)
     }
 
 
@@ -105,6 +105,7 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
             throw LiveKitRoomMediaError.trackHasNoSdkTrack
         }
         let publishOptions: VideoPublishOptions = LiveKitVideoSources.videoPublishOptions(captureCode: .screen, isGroupCall: isGroupCall, prioritizeVP8: prioritizeVP8)
+        try await unpublishVideos(source: .screenShareVideo)
         try await localParticipant.publish(videoTrack: sdkTrack, options: publishOptions)
     }
 
@@ -153,6 +154,17 @@ final class LiveKitRoomMediaSDK: LiveKitRoomMedia {
     /// The device whose identifier equals `id`, or nil when no device owns it.
     static func selectDevice<Device: Identifiable>(id: String, in devices: [Device]) -> Device? where Device.ID == String {
         return devices.first(where: { $0.id == id })
+    }
+
+
+    /// Removes every local video publication of the given source from the room.
+    private func unpublishVideos(source: Track.Source) async throws {
+        let publications: [LocalTrackPublication] = localParticipant.localVideoTracks.filter { (publication: LocalTrackPublication) -> Bool in
+            return publication.source == source
+        }
+        for publication: LocalTrackPublication in publications {
+            try await localParticipant.unpublish(publication: publication)
+        }
     }
 
 
