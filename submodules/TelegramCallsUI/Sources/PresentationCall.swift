@@ -51,6 +51,12 @@ public final class PresentationCallImpl: PresentationCall {
     private var sessionState: CallSession?
     private var callContextState: OngoingCallContextState?
     private var ongoingContext: OngoingCallContext?
+#if os(iOS)
+    private var liveKitOngoingContext: LiveKitOngoingCallContext?
+    private var liveKitStartDisposable: Disposable?
+    private var liveKitCameraCapturer: LiveKitCallVideoCapturer?
+    private var liveKitScreencastCapturer: LiveKitScreencastCapturer?
+#endif
     private var conferenceCallContext: PresentationGroupCallImpl?
     private var ongoingContextStateDisposable: Disposable?
     private var ongoingContextIsFailedDisposable: Disposable?
@@ -131,8 +137,13 @@ public final class PresentationCallImpl: PresentationCall {
     
     private var useFrontCamera: Bool = true
     private var videoCapturer: OngoingCallVideoCapturer?
+    private let outgoingVideoPromise = Promise<OngoingGroupCallContext.VideoFrameData>()
     public var hasVideo: Bool {
+#if os(iOS)
+        return self.videoCapturer != nil || self.liveKitCameraCapturer != nil
+#else
         return self.videoCapturer != nil
+#endif
     }
 
     private var screencastBufferServerContext: IpcGroupCallBufferAppContext?
@@ -465,7 +476,10 @@ public final class PresentationCallImpl: PresentationCall {
         self.ongoingContextIsFailedDisposable?.dispose()
         self.ongoingContextIsDroppedDisposable?.dispose()
         self.waitForConferenceCallReadyDisposable?.dispose()
-        
+#if os(iOS)
+        self.liveKitStartDisposable?.dispose()
+#endif
+
         if let dropCallKitCallTimer = self.dropCallKitCallTimer {
             dropCallKitCallTimer.invalidate()
             if !self.droppedCall {
@@ -495,6 +509,12 @@ public final class PresentationCallImpl: PresentationCall {
             self.ongoingContext?.stop(sendDebugLogs: false, debugLogValue: debugLogValue)
         }
         self.ongoingContext = nil
+#if os(iOS)
+        self.stopLiveKitOngoingContext()
+        self.liveKitOngoingContext = nil
+        self.liveKitCameraCapturer = nil
+        self.liveKitScreencastCapturer = nil
+#endif
         self.ongoingContextStateDisposable?.dispose()
         self.ongoingContextStateDisposable = nil
         self.ongoingContextIsFailedDisposable?.dispose()
@@ -537,6 +557,7 @@ public final class PresentationCallImpl: PresentationCall {
         
         self.videoCapturer = nil
 
+        self.outgoingVideoPromise.set(.never())
         self.screencastBufferServerContext = nil
         self.screencastCapturer = nil
         self.isScreencastActive = false
@@ -1037,7 +1058,8 @@ public final class PresentationCallImpl: PresentationCall {
                         let logName = "\(id.id)_\(id.accessHash)"
                         
                         var inlineConferenceSlug: String?
-                        if let dict = try? JSONSerialization.jsonObject(with: (customParameters ?? "{}").data(using: .utf8)!) as? [String: Any] {
+                        let isLiveKitCall: Bool = version == LiveKitCallContext.protocolName
+                        if !isLiveKitCall, let dict = try? JSONSerialization.jsonObject(with: (customParameters ?? "{}").data(using: .utf8)!) as? [String: Any] {
                             inlineConferenceSlug = dict["inline_conference"] as? String
                         }
                         
@@ -1212,6 +1234,15 @@ public final class PresentationCallImpl: PresentationCall {
                                     callContextState: nil, reception: nil, audioSessionControl: self.audioSessionControl)
                                 })
                             }
+                        } else if isLiveKitCall {
+#if os(iOS)
+                            self.startLiveKitOngoingCall(
+                                callId: id.id,
+                                key: key,
+                                customParameters: customParameters,
+                                version: version
+                            )
+#endif
                         } else {
                             let updatedConnections = connections
                             
@@ -1233,13 +1264,7 @@ public final class PresentationCallImpl: PresentationCall {
                             
                             self.ongoingContextStateDisposable = (ongoingContext.state
                             |> deliverOnMainQueue).start(next: { [weak self] contextState in
-                                if let strongSelf = self {
-                                    if let sessionState = strongSelf.sessionState {
-                                        strongSelf.updateSessionState(sessionState: sessionState, callContextState: contextState, reception: strongSelf.reception, audioSessionControl: strongSelf.audioSessionControl)
-                                    } else {
-                                        strongSelf.callContextState = contextState
-                                    }
-                                }
+                                self?.handleOngoingCallContextState(contextState)
                             })
                             
                             self.audioLevelDisposable = (ongoingContext.audioLevel
@@ -1292,6 +1317,9 @@ public final class PresentationCallImpl: PresentationCall {
                     } else {
                         self.ongoingContext?.stop(sendDebugLogs: options.contains(.sendDebugLogs), debugLogValue: debugLogValue)
                     }
+#if os(iOS)
+                    self.stopLiveKitOngoingContext()
+#endif
                 }
             case .dropping:
                 break
@@ -1305,6 +1333,9 @@ public final class PresentationCallImpl: PresentationCall {
                     } else {
                         self.ongoingContext?.stop(debugLogValue: debugLogValue)
                     }
+#if os(iOS)
+                    self.stopLiveKitOngoingContext()
+#endif
                 }
         }
         var terminating = false
@@ -1434,6 +1465,74 @@ public final class PresentationCallImpl: PresentationCall {
         }
     }
     
+    private func handleOngoingCallContextState(_ contextState: OngoingCallContextState) {
+        if let sessionState = self.sessionState {
+            self.updateSessionState(sessionState: sessionState, callContextState: contextState, reception: self.reception, audioSessionControl: self.audioSessionControl)
+        } else {
+            self.callContextState = contextState
+        }
+    }
+
+#if os(iOS)
+    private func startLiveKitOngoingCall(
+        callId: Int64,
+        key: Data,
+        customParameters: String?,
+        version: String
+    ) {
+        let audioSessionActive: Signal<Bool, NoError>
+        if self.sharedAudioContext != nil {
+            audioSessionActive = .single(true)
+        } else {
+            audioSessionActive = self.audioSessionActive.get()
+        }
+
+        var initialVideo: LiveKitPrivateVideoCapturer?
+        if self.videoCapturer != nil {
+            self.videoCapturer = nil
+            let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? LiveKitCallVideoCapturer(isFrontCamera: self.useFrontCamera)
+            self.liveKitCameraCapturer = liveKitCameraCapturer
+            initialVideo = liveKitCameraCapturer
+            self.outgoingVideoPromise.set(liveKitCameraCapturer.video())
+        }
+
+        let liveKitOngoingContext: LiveKitOngoingCallContext = LiveKitOngoingCallContext(
+            callId: callId,
+            version: version,
+            customParameters: customParameters ?? "",
+            key: key,
+            isMuted: self.isMutedValue,
+            video: initialVideo
+        )
+        self.liveKitOngoingContext = liveKitOngoingContext
+
+        self.ongoingContextStateDisposable = (liveKitOngoingContext.state
+        |> deliverOnMainQueue).start(next: { [weak self] contextState in
+            self?.handleOngoingCallContextState(contextState)
+        })
+
+        self.liveKitStartDisposable?.dispose()
+        self.liveKitStartDisposable = (audioSessionActive
+        |> filter { $0 }
+        |> take(1)
+        |> deliverOnMainQueue).start(next: { _ in
+            liveKitOngoingContext.start()
+        })
+    }
+
+    private func stopLiveKitOngoingContext() {
+        self.liveKitStartDisposable?.dispose()
+        self.liveKitStartDisposable = nil
+        self.liveKitOngoingContext?.stop()
+    }
+
+    private func requestLiveKitCameraVideo(_ liveKitOngoingContext: LiveKitOngoingCallContext) {
+        let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? LiveKitCallVideoCapturer(isFrontCamera: self.useFrontCamera)
+        self.liveKitCameraCapturer = liveKitCameraCapturer
+        liveKitOngoingContext.requestVideo(liveKitCameraCapturer)
+    }
+#endif
+
     private func updateIsAudioSessionActive(_ value: Bool) {
         if self.isMovedToConference {
             return
@@ -1540,7 +1639,10 @@ public final class PresentationCallImpl: PresentationCall {
         } else {
             self.ongoingContext?.stop(debugLogValue: debugLogValue)
         }
-        
+#if os(iOS)
+        self.stopLiveKitOngoingContext()
+#endif
+
         return self.hungUpPromise.get()
     }
     
@@ -1556,6 +1658,9 @@ public final class PresentationCallImpl: PresentationCall {
         } else {
             self.ongoingContext?.stop(debugLogValue: debugLog)
         }
+#if os(iOS)
+        self.stopLiveKitOngoingContext()
+#endif
     }
     
     public func toggleIsMuted() {
@@ -1576,12 +1681,21 @@ public final class PresentationCallImpl: PresentationCall {
         } else {
             self.ongoingContext?.setIsMuted(self.isMutedValue)
         }
+#if os(iOS)
+        self.liveKitOngoingContext?.setIsMuted(self.isMutedValue)
+#endif
     }
-    
+
     public func requestVideo() {
         if self.isMovedToConference {
             return
         }
+#if os(iOS)
+        if let liveKitOngoingContext = self.liveKitOngoingContext {
+            self.requestLiveKitCameraVideo(liveKitOngoingContext)
+            return
+        }
+#endif
         if self.videoCapturer == nil {
             let videoCapturer = OngoingCallVideoCapturer()
             self.videoCapturer = videoCapturer
@@ -1599,6 +1713,12 @@ public final class PresentationCallImpl: PresentationCall {
         if self.isMovedToConference {
             return
         }
+#if os(iOS)
+        if let liveKitOngoingContext = self.liveKitOngoingContext {
+            self.requestLiveKitCameraVideo(liveKitOngoingContext)
+            return
+        }
+#endif
         if self.videoCapturer == nil {
             self.videoCapturer = capturer
         }
@@ -1623,8 +1743,17 @@ public final class PresentationCallImpl: PresentationCall {
         if self.isMovedToConference {
             return
         }
+#if os(iOS)
+        if let liveKitOngoingContext = self.liveKitOngoingContext {
+            self.liveKitCameraCapturer = nil
+            self.outgoingVideoPromise.set(.never())
+            liveKitOngoingContext.disableVideo()
+            return
+        }
+#endif
         if let _ = self.videoCapturer {
             self.videoCapturer = nil
+            self.outgoingVideoPromise.set(.never())
             if let conferenceCallContext = self.conferenceCallContext {
                 conferenceCallContext.disableVideo()
             } else if let ongoingContext = self.ongoingContext {
@@ -1642,14 +1771,24 @@ public final class PresentationCallImpl: PresentationCall {
         self.screencastBufferServerContext = screencastBufferServerContext
 
         self.screencastFramesDisposable.set((screencastBufferServerContext.frames
-        |> deliverOnMainQueue).start(next: { [weak screencastCapturer] screencastFrame in
+        |> deliverOnMainQueue).start(next: { [weak self, weak screencastCapturer] screencastFrame in
+#if os(iOS)
+            if let liveKitScreencastCapturer = self?.liveKitScreencastCapturer {
+                guard let sampleBuffer = sampleBufferFromPixelBuffer(pixelBuffer: screencastFrame.0) else {
+                    return
+                }
+
+                liveKitScreencastCapturer.injectSampleBuffer(sampleBuffer, rotation: screencastFrame.1, completion: {})
+                return
+            }
+#endif
             guard let screencastCapturer = screencastCapturer else {
                 return
             }
             guard let sampleBuffer = sampleBufferFromPixelBuffer(pixelBuffer: screencastFrame.0) else {
                 return
             }
-            
+
             screencastCapturer.injectSampleBuffer(sampleBuffer, rotation: screencastFrame.1, completion: {})
         }))
         self.screencastAudioDataDisposable.set((screencastBufferServerContext.audioData
@@ -1683,6 +1822,16 @@ public final class PresentationCallImpl: PresentationCall {
         }
         self.disableVideo()
 
+#if os(iOS)
+        if let liveKitOngoingContext = self.liveKitOngoingContext {
+            let liveKitScreencastCapturer: LiveKitScreencastCapturer = self.liveKitScreencastCapturer ?? LiveKitScreencastCapturer()
+            self.liveKitScreencastCapturer = liveKitScreencastCapturer
+            self.isScreencastActive = true
+            liveKitOngoingContext.requestVideo(liveKitScreencastCapturer)
+            return
+        }
+#endif
+
         if let screencastCapturer = self.screencastCapturer {
             self.isScreencastActive = true
             if let conferenceCallContext = self.conferenceCallContext {
@@ -1700,11 +1849,18 @@ public final class PresentationCallImpl: PresentationCall {
         if self.isScreencastActive {
             if let _ = self.videoCapturer {
                 self.videoCapturer = nil
+                self.outgoingVideoPromise.set(.never())
             }
             self.isScreencastActive = false
             self.conferenceCallContext?.disableVideo()
             self.ongoingContext?.disableVideo()
             self.conferenceCallImpl?.disableVideo()
+#if os(iOS)
+            if let liveKitOngoingContext = self.liveKitOngoingContext {
+                self.liveKitScreencastCapturer = nil
+                liveKitOngoingContext.disableVideo()
+            }
+#endif
             if reset {
                 self.resetScreencastContext()
             }
@@ -1716,6 +1872,9 @@ public final class PresentationCallImpl: PresentationCall {
             return
         }
         self.videoCapturer?.setIsVideoEnabled(!isPaused)
+#if os(iOS)
+        self.liveKitCameraCapturer?.setIsVideoEnabled(!isPaused)
+#endif
     }
     
     public func upgradeToConference(invitePeers: [(id: EnginePeer.Id, isVideo: Bool)], completion: @escaping (PresentationGroupCall) -> Void) -> Disposable {
@@ -1789,12 +1948,26 @@ public final class PresentationCallImpl: PresentationCall {
             } else if let ongoingContext = self.ongoingContext {
                 return ongoingContext.video(isIncoming: isIncoming)
             } else {
+#if os(iOS)
+                if let liveKitOngoingContext = self.liveKitOngoingContext {
+                    return liveKitOngoingContext.remoteVideo()
+                }
+#endif
                 return nil
             }
         } else if let videoCapturer = self.videoCapturer {
-            return videoCapturer.video()
+            self.outgoingVideoPromise.set(videoCapturer.video())
+            return self.outgoingVideoPromise.get()
         } else {
+#if os(iOS)
+            if let liveKitCameraCapturer = self.liveKitCameraCapturer {
+                self.outgoingVideoPromise.set(liveKitCameraCapturer.video())
+                return self.outgoingVideoPromise.get()
+            }
             return nil
+#else
+            return nil
+#endif
         }
     }
     
@@ -1803,73 +1976,29 @@ public final class PresentationCallImpl: PresentationCall {
             completion(nil)
             return
         }
+#if os(iOS)
+        if self.liveKitOngoingContext != nil {
+            let liveKitCameraCapturer: LiveKitCallVideoCapturer = self.liveKitCameraCapturer ?? LiveKitCallVideoCapturer(isFrontCamera: self.useFrontCamera)
+            self.liveKitCameraCapturer = liveKitCameraCapturer
+            liveKitCameraCapturer.makeOutgoingVideoView(completion: { view in
+                if let view = view {
+                    completion(makePresentationCallVideoView(view: view))
+                } else {
+                    completion(nil)
+                }
+            })
+            return
+        }
+#endif
+
         if self.videoCapturer == nil {
             let videoCapturer = OngoingCallVideoCapturer()
             self.videoCapturer = videoCapturer
         }
-        
+
         self.videoCapturer?.makeOutgoingVideoView(requestClone: false, completion: { view, _ in
             if let view = view {
-                let setOnFirstFrameReceived = view.setOnFirstFrameReceived
-                let setOnOrientationUpdated = view.setOnOrientationUpdated
-                let setOnIsMirroredUpdated = view.setOnIsMirroredUpdated
-                let updateIsEnabled = view.updateIsEnabled
-                completion(PresentationCallVideoView(
-                    holder: view,
-                    view: view.view,
-                    setOnFirstFrameReceived: { f in
-                        setOnFirstFrameReceived(f)
-                    },
-                    getOrientation: { [weak view] in
-                        if let view = view {
-                            let mappedValue: PresentationCallVideoView.Orientation
-                            switch view.getOrientation() {
-                            case .rotation0:
-                                mappedValue = .rotation0
-                            case .rotation90:
-                                mappedValue = .rotation90
-                            case .rotation180:
-                                mappedValue = .rotation180
-                            case .rotation270:
-                                mappedValue = .rotation270
-                            }
-                            return mappedValue
-                        } else {
-                            return .rotation0
-                        }
-                    },
-                    getAspect: { [weak view] in
-                        if let view = view {
-                            return view.getAspect()
-                        } else {
-                            return 0.0
-                        }
-                    },
-                    setOnOrientationUpdated: { f in
-                        setOnOrientationUpdated { value, aspect in
-                            let mappedValue: PresentationCallVideoView.Orientation
-                            switch value {
-                            case .rotation0:
-                                mappedValue = .rotation0
-                            case .rotation90:
-                                mappedValue = .rotation90
-                            case .rotation180:
-                                mappedValue = .rotation180
-                            case .rotation270:
-                                mappedValue = .rotation270
-                            }
-                            f?(mappedValue, aspect)
-                        }
-                    },
-                    setOnIsMirroredUpdated: { f in
-                        setOnIsMirroredUpdated { value in
-                            f?(value)
-                        }
-                    },
-                    updateIsEnabled: { value in
-                        updateIsEnabled(value)
-                    }
-                ))
+                completion(makePresentationCallVideoView(view: view))
             } else {
                 completion(nil)
             }
@@ -1882,6 +2011,9 @@ public final class PresentationCallImpl: PresentationCall {
         }
         self.useFrontCamera = !self.useFrontCamera
         self.videoCapturer?.switchVideoInput(isFront: self.useFrontCamera)
+#if os(iOS)
+        self.liveKitCameraCapturer?.switchCamera()
+#endif
     }
     
     public func playRemoteCameraTone() {
@@ -1915,6 +2047,69 @@ public final class PresentationCallImpl: PresentationCall {
             self.ongoingContext?.deactivateIncomingAudio()
         }
     }
+}
+
+fileprivate func makePresentationCallVideoView(view: OngoingCallContextPresentationCallVideoView) -> PresentationCallVideoView {
+    let setOnFirstFrameReceived = view.setOnFirstFrameReceived
+    let setOnOrientationUpdated = view.setOnOrientationUpdated
+    let setOnIsMirroredUpdated = view.setOnIsMirroredUpdated
+    let updateIsEnabled = view.updateIsEnabled
+    return PresentationCallVideoView(
+        holder: view,
+        view: view.view,
+        setOnFirstFrameReceived: { f in
+            setOnFirstFrameReceived(f)
+        },
+        getOrientation: { [weak view] in
+            if let view = view {
+                let mappedValue: PresentationCallVideoView.Orientation
+                switch view.getOrientation() {
+                case .rotation0:
+                    mappedValue = .rotation0
+                case .rotation90:
+                    mappedValue = .rotation90
+                case .rotation180:
+                    mappedValue = .rotation180
+                case .rotation270:
+                    mappedValue = .rotation270
+                }
+                return mappedValue
+            } else {
+                return .rotation0
+            }
+        },
+        getAspect: { [weak view] in
+            if let view = view {
+                return view.getAspect()
+            } else {
+                return 0.0
+            }
+        },
+        setOnOrientationUpdated: { f in
+            setOnOrientationUpdated { value, aspect in
+                let mappedValue: PresentationCallVideoView.Orientation
+                switch value {
+                case .rotation0:
+                    mappedValue = .rotation0
+                case .rotation90:
+                    mappedValue = .rotation90
+                case .rotation180:
+                    mappedValue = .rotation180
+                case .rotation270:
+                    mappedValue = .rotation270
+                }
+                f?(mappedValue, aspect)
+            }
+        },
+        setOnIsMirroredUpdated: { f in
+            setOnIsMirroredUpdated { value in
+                f?(value)
+            }
+        },
+        updateIsEnabled: { value in
+            updateIsEnabled(value)
+        }
+    )
 }
 
 func sampleBufferFromPixelBuffer(pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {

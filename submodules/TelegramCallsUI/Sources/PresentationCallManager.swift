@@ -114,11 +114,11 @@ public final class PresentationCallManagerImpl: PresentationCallManager {
     private var resumeMedia: Bool = false
     
     public static var voipMaxLayer: Int32 {
-        return OngoingCallContext.maxLayer
+        return 92
     }
-    
+
     public static func voipVersions(includeExperimental: Bool, includeReference: Bool) -> [(version: String, supportsVideo: Bool)] {
-        return OngoingCallContext.versions(includeExperimental: includeExperimental, includeReference: includeReference)
+        return [(version: LiveKitCallContext.protocolName, supportsVideo: true)]
     }
     
     public init(
