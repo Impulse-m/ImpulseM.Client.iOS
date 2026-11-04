@@ -43,37 +43,47 @@ public protocol ImpulseKeychain: Sendable {
 
 /// The query dictionaries of the system keychain, kept apart so the attributes can be checked without a keychain.
 enum ImpulseKeychainQuery {
+    /// The data protection keychain takes the access group. The file-based login keychain takes neither the access group
+    /// nor the data protection flag, so both are left out when the flag is false.
     static func item(
         service: String,
         account: String,
-        accessGroup: String?
+        accessGroup: String?,
+        usesDataProtectionKeychain: Bool = true
     ) -> [String: Any] {
         var query: [String: Any] = [:]
         query[kSecClass as String] = kSecClassGenericPassword
         query[kSecAttrService as String] = service
         query[kSecAttrAccount as String] = account
-        if let accessGroup: String = accessGroup, !accessGroup.isEmpty {
-            query[kSecAttrAccessGroup as String] = accessGroup
+        if usesDataProtectionKeychain {
+            if let accessGroup: String = accessGroup, !accessGroup.isEmpty {
+                query[kSecAttrAccessGroup as String] = accessGroup
+            }
+            query[kSecUseDataProtectionKeychain as String] = true
         }
-        query[kSecUseDataProtectionKeychain as String] = true
         return query
     }
 
 
-    /// A new item is readable after the first unlock and never leaves this device: it is excluded from backups.
+    /// A new item is readable after the first unlock and never leaves this device: it is excluded from backups. The login
+    /// keychain takes no accessibility attribute, so the attribute is left out there.
     static func addition(
         service: String,
         account: String,
         accessGroup: String?,
-        data: Data
+        data: Data,
+        usesDataProtectionKeychain: Bool = true
     ) -> [String: Any] {
         var query: [String: Any] = item(
             service: service,
             account: account,
-            accessGroup: accessGroup
+            accessGroup: accessGroup,
+            usesDataProtectionKeychain: usesDataProtectionKeychain
         )
         query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        if usesDataProtectionKeychain {
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        }
         return query
     }
 }
@@ -82,7 +92,13 @@ enum ImpulseKeychainQuery {
 /// The system keychain. Items are written with an explicit access group, so an installed official Telegram cannot read
 /// them. A nil access group addresses the app's own items.
 public struct ImpulseSystemKeychain: ImpulseKeychain {
-    public init() {
+    private let usesDataProtectionKeychain: Bool
+
+
+    /// The data protection keychain is used by default. An unsigned macOS app has no entitlement for it, so it uses the
+    /// file-based login keychain with the flag set to false.
+    public init(usesDataProtectionKeychain: Bool = true) {
+        self.usesDataProtectionKeychain = usesDataProtectionKeychain
     }
 
 
@@ -94,7 +110,8 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
         var query: [String: Any] = ImpulseKeychainQuery.item(
             service: service,
             account: account,
-            accessGroup: accessGroup
+            accessGroup: accessGroup,
+            usesDataProtectionKeychain: self.usesDataProtectionKeychain
         )
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -119,7 +136,8 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
         let query: [String: Any] = ImpulseKeychainQuery.item(
             service: service,
             account: account,
-            accessGroup: accessGroup
+            accessGroup: accessGroup,
+            usesDataProtectionKeychain: self.usesDataProtectionKeychain
         )
         let update: [String: Any] = [kSecValueData as String: data]
         let updateStatus: OSStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
@@ -133,7 +151,8 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
             service: service,
             account: account,
             accessGroup: accessGroup,
-            data: data
+            data: data,
+            usesDataProtectionKeychain: self.usesDataProtectionKeychain
         )
         let addStatus: OSStatus = SecItemAdd(addQuery as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
@@ -150,7 +169,8 @@ public struct ImpulseSystemKeychain: ImpulseKeychain {
         let query: [String: Any] = ImpulseKeychainQuery.item(
             service: service,
             account: account,
-            accessGroup: accessGroup
+            accessGroup: accessGroup,
+            usesDataProtectionKeychain: self.usesDataProtectionKeychain
         )
         let status: OSStatus = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -192,24 +212,64 @@ final class ImpulseKeychainFallbackNotice: @unchecked Sendable {
 }
 
 
+/// Says once that the session is kept in the login keychain. The message goes to a sink, so the single announcement can
+/// be checked.
+final class ImpulseKeychainFileFallbackNotice: @unchecked Sendable {
+    static let shared: ImpulseKeychainFileFallbackNotice = ImpulseKeychainFileFallbackNotice(sink: { (message: String) -> Void in
+        ImpulseKeychainFileFallbackNotice.logger.notice("\(message, privacy: .public)")
+    })
+
+    private static let logger: Logger = Logger(subsystem: "ImpulseTransport", category: "ImpulseKeychain")
+    private static let message: String = "The data protection keychain needs a signed app (errSecMissingEntitlement). The session is kept in the login keychain."
+
+    private let lock: NSLock = NSLock()
+    private let sink: @Sendable (String) -> Void
+    private var announced: Bool = false
+
+
+    init(sink: @escaping @Sendable (String) -> Void) {
+        self.sink = sink
+    }
+
+
+    func announceOnce() {
+        self.lock.lock()
+        let isFirst: Bool = !self.announced
+        self.announced = true
+        self.lock.unlock()
+        if isFirst {
+            self.sink(ImpulseKeychainFileFallbackNotice.message)
+        }
+    }
+}
+
+
 /// Runs keychain calls for one store. The calls use the access group. Only when the system answers
-/// errSecMissingEntitlement does the store move to the app's own items, announce it once, and stay there.
+/// errSecMissingEntitlement does the store move to the app's own items. When the own items are refused with the same
+/// status and a file keychain is given, the store moves to the file keychain, announces it once, and stays there.
 final class ImpulseKeychainAccess: @unchecked Sendable {
     private let keychain: any ImpulseKeychain
     private let accessGroup: String?
+    private let fileKeychain: (any ImpulseKeychain)?
     private let notice: ImpulseKeychainFallbackNotice
+    private let fileNotice: ImpulseKeychainFileFallbackNotice
     private let lock: NSLock = NSLock()
     private var fellBack: Bool = false
+    private var movedToFile: Bool = false
 
 
     init(
         keychain: any ImpulseKeychain,
         accessGroup: String?,
-        notice: ImpulseKeychainFallbackNotice
+        notice: ImpulseKeychainFallbackNotice,
+        fileKeychain: (any ImpulseKeychain)? = ImpulseKeychainAccess.defaultFileKeychain(),
+        fileNotice: ImpulseKeychainFileFallbackNotice = ImpulseKeychainFileFallbackNotice.shared
     ) {
         self.keychain = keychain
         self.accessGroup = accessGroup
+        self.fileKeychain = fileKeychain
         self.notice = notice
+        self.fileNotice = fileNotice
     }
 
 
@@ -218,19 +278,49 @@ final class ImpulseKeychainAccess: @unchecked Sendable {
         fallback: Output,
         _ operation: (any ImpulseKeychain, String?) throws -> Output
     ) -> Output {
-        let group: String? = self.currentAccessGroup()
-        do {
-            return try operation(self.keychain, group)
-        } catch let error as ImpulseKeychainError where error.status == errSecMissingEntitlement && group != nil {
-            self.switchToOwnItems()
+        if let movedKeychain: any ImpulseKeychain = self.activeFileKeychain() {
             do {
-                return try operation(self.keychain, nil)
+                return try operation(movedKeychain, nil)
             } catch {
                 return fallback
             }
+        }
+        let group: String? = self.currentAccessGroup()
+        do {
+            return try operation(self.keychain, group)
+        } catch let error as ImpulseKeychainError where error.status == errSecMissingEntitlement {
+            if group == nil {
+                return self.moveToFileKeychain(fallback: fallback, operation)
+            }
+            self.switchToOwnItems()
+            return self.run(fallback: fallback, operation)
         } catch {
             return fallback
         }
+    }
+
+
+    /// The keychain that holds the session when the data protection keychain refuses the app: the login keychain on macOS,
+    /// and none on iOS.
+    static func defaultFileKeychain() -> (any ImpulseKeychain)? {
+#if os(macOS)
+        return ImpulseSystemKeychain(usesDataProtectionKeychain: false)
+#else
+        return nil
+#endif
+    }
+
+
+    /// The file keychain that the store has moved to, or nil while it still uses the system keychain.
+    private func activeFileKeychain() -> (any ImpulseKeychain)? {
+        self.lock.lock()
+        defer {
+            self.lock.unlock()
+        }
+        if self.movedToFile {
+            return self.fileKeychain
+        }
+        return nil
     }
 
 
@@ -243,11 +333,32 @@ final class ImpulseKeychainAccess: @unchecked Sendable {
     }
 
 
+    /// Moves the store to the file keychain and runs the call there. Without a file keychain the call gives the fallback.
+    private func moveToFileKeychain<Output>(
+        fallback: Output,
+        _ operation: (any ImpulseKeychain, String?) throws -> Output
+    ) -> Output {
+        guard self.fileKeychain != nil else {
+            return fallback
+        }
+        self.switchToFileKeychain()
+        return self.run(fallback: fallback, operation)
+    }
+
+
     private func switchToOwnItems() {
         self.lock.lock()
         self.fellBack = true
         self.lock.unlock()
         self.notice.announceOnce()
+    }
+
+
+    private func switchToFileKeychain() {
+        self.lock.lock()
+        self.movedToFile = true
+        self.lock.unlock()
+        self.fileNotice.announceOnce()
     }
 }
 
@@ -377,13 +488,17 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
         accountIndex: Int,
         accessGroup: String?,
         keychain: any ImpulseKeychain,
-        notice: ImpulseKeychainFallbackNotice
+        notice: ImpulseKeychainFallbackNotice,
+        fileKeychain: (any ImpulseKeychain)? = ImpulseKeychainAccess.defaultFileKeychain(),
+        fileNotice: ImpulseKeychainFileFallbackNotice = ImpulseKeychainFileFallbackNotice.shared
     ) {
         let suffix: String = accountIndex == 0 ? "" : String(accountIndex)
         self.access = ImpulseKeychainAccess(
             keychain: keychain,
             accessGroup: accessGroup,
-            notice: notice
+            notice: notice,
+            fileKeychain: fileKeychain,
+            fileNotice: fileNotice
         )
         self.accountSuffix = suffix
         self.sessionAccount = "session" + suffix

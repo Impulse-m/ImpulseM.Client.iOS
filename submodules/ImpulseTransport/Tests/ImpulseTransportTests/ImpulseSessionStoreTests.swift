@@ -9,19 +9,25 @@ private let otherAccessGroup: String = "other.group.impulsem"
 private let legacyService: String = "telegramApplicationSecretKey_v7"
 
 
-/// An in-memory keychain. With a refused status, every call that names an access group fails with that status, the way
-/// an unsigned build answers errSecMissingEntitlement.
+/// An in-memory keychain. With a refused access group status, every call that names an access group fails with that
+/// status, the way an unsigned build answers errSecMissingEntitlement. With a refused own items status, every call
+/// without an access group fails with that status.
 private final class MemoryKeychain: ImpulseKeychain, @unchecked Sendable {
     private let lock: NSLock = NSLock()
     private let refusedAccessGroupStatus: OSStatus?
+    private let refusedOwnItemsStatus: OSStatus?
     private var items: [String: Data] = [:]
     private var writtenServices: [String] = []
     private var writtenAccessGroups: [String?] = []
     private var attemptedAccessGroups: [String?] = []
 
 
-    init(refusedAccessGroupStatus: OSStatus? = nil) {
+    init(
+        refusedAccessGroupStatus: OSStatus? = nil,
+        refusedOwnItemsStatus: OSStatus? = nil
+    ) {
         self.refusedAccessGroupStatus = refusedAccessGroupStatus
+        self.refusedOwnItemsStatus = refusedOwnItemsStatus
     }
 
 
@@ -110,10 +116,18 @@ private final class MemoryKeychain: ImpulseKeychain, @unchecked Sendable {
 
 
     private func refuseIfNeeded(accessGroup: String?) throws {
-        guard let status: OSStatus = self.refusedAccessGroupStatus, accessGroup != nil else {
+        guard let status: OSStatus = self.refusedStatus(accessGroup: accessGroup) else {
             return
         }
         throw ImpulseKeychainError(status: status)
+    }
+
+
+    private func refusedStatus(accessGroup: String?) -> OSStatus? {
+        if accessGroup == nil {
+            return self.refusedOwnItemsStatus
+        }
+        return self.refusedAccessGroupStatus
     }
 
 
@@ -155,6 +169,13 @@ private final class NoticeRecorder: @unchecked Sendable {
 final class ImpulseSessionStoreTests: XCTestCase {
     private func makeNotice(_ recorder: NoticeRecorder) -> ImpulseKeychainFallbackNotice {
         return ImpulseKeychainFallbackNotice(sink: { (message: String) -> Void in
+            recorder.record(message)
+        })
+    }
+
+
+    private func makeFileNotice(_ recorder: NoticeRecorder) -> ImpulseKeychainFileFallbackNotice {
+        return ImpulseKeychainFileFallbackNotice(sink: { (message: String) -> Void in
             recorder.record(message)
         })
     }
@@ -490,5 +511,101 @@ final class ImpulseSessionStoreTests: XCTestCase {
         XCTAssertEqual(keychain.itemCount(), 0)
         XCTAssertEqual(recorder.count(), 0)
         XCTAssertFalse(keychain.attemptedGroups().contains(where: { (group: String?) -> Bool in group == nil }))
+    }
+
+
+    func testRefusedOwnItemsMoveToTheFileKeychainOnce() {
+        let keychain: MemoryKeychain = MemoryKeychain(
+            refusedAccessGroupStatus: errSecMissingEntitlement,
+            refusedOwnItemsStatus: errSecMissingEntitlement
+        )
+        let fileKeychain: MemoryKeychain = MemoryKeychain()
+        let recorder: NoticeRecorder = NoticeRecorder()
+        let fileRecorder: NoticeRecorder = NoticeRecorder()
+        let store: ImpulseSessionStore = ImpulseSessionStore(
+            accountIndex: 0,
+            accessGroup: testAccessGroup,
+            keychain: keychain,
+            notice: self.makeNotice(recorder),
+            fileKeychain: fileKeychain,
+            fileNotice: self.makeFileNotice(fileRecorder)
+        )
+        let tokens: ImpulseSessionTokens = ImpulseSessionTokens(accessToken: "first", refreshToken: "refresh", userId: 7)
+
+        store.save(tokens)
+
+        XCTAssertEqual(store.load(), tokens)
+        XCTAssertTrue(store.isLoggedIn)
+        XCTAssertEqual(fileKeychain.itemCount(), 1)
+        let expectedFileGroups: [String?] = [nil]
+        XCTAssertEqual(fileKeychain.writeAccessGroups(), expectedFileGroups)
+        let expectedAttempts: [String?] = [testAccessGroup, nil]
+        XCTAssertEqual(keychain.attemptedGroups(), expectedAttempts)
+        XCTAssertEqual(recorder.count(), 1)
+        XCTAssertEqual(fileRecorder.count(), 1)
+
+        store.save(ImpulseSessionTokens(accessToken: "second", refreshToken: "refresh", userId: 7))
+        XCTAssertEqual(store.load()?.accessToken, "second")
+        store.clear()
+        XCTAssertNil(store.load())
+
+        XCTAssertEqual(keychain.attemptedGroups(), expectedAttempts)
+        XCTAssertEqual(fileKeychain.itemCount(), 0)
+        XCTAssertEqual(recorder.count(), 1)
+        XCTAssertEqual(fileRecorder.count(), 1)
+    }
+
+
+    func testRefusedOwnItemsWithoutAFileKeychainGiveTheFallback() {
+        let keychain: MemoryKeychain = MemoryKeychain(
+            refusedAccessGroupStatus: errSecMissingEntitlement,
+            refusedOwnItemsStatus: errSecMissingEntitlement
+        )
+        let recorder: NoticeRecorder = NoticeRecorder()
+        let fileRecorder: NoticeRecorder = NoticeRecorder()
+        let store: ImpulseSessionStore = ImpulseSessionStore(
+            accountIndex: 0,
+            accessGroup: testAccessGroup,
+            keychain: keychain,
+            notice: self.makeNotice(recorder),
+            fileKeychain: nil,
+            fileNotice: self.makeFileNotice(fileRecorder)
+        )
+
+        store.save(ImpulseSessionTokens(accessToken: "access", refreshToken: "refresh", userId: 7))
+
+        XCTAssertNil(store.load())
+        XCTAssertFalse(store.isLoggedIn)
+        XCTAssertEqual(keychain.itemCount(), 0)
+        XCTAssertEqual(recorder.count(), 1)
+        XCTAssertEqual(fileRecorder.count(), 0)
+    }
+
+
+    func testOtherOwnItemsRefusalDoesNotUseTheFileKeychain() {
+        let keychain: MemoryKeychain = MemoryKeychain(
+            refusedAccessGroupStatus: errSecMissingEntitlement,
+            refusedOwnItemsStatus: errSecInteractionNotAllowed
+        )
+        let fileKeychain: MemoryKeychain = MemoryKeychain()
+        let recorder: NoticeRecorder = NoticeRecorder()
+        let fileRecorder: NoticeRecorder = NoticeRecorder()
+        let store: ImpulseSessionStore = ImpulseSessionStore(
+            accountIndex: 0,
+            accessGroup: testAccessGroup,
+            keychain: keychain,
+            notice: self.makeNotice(recorder),
+            fileKeychain: fileKeychain,
+            fileNotice: self.makeFileNotice(fileRecorder)
+        )
+
+        store.save(ImpulseSessionTokens(accessToken: "access", refreshToken: "refresh", userId: 7))
+
+        XCTAssertNil(store.load())
+        XCTAssertFalse(store.isLoggedIn)
+        XCTAssertEqual(keychain.itemCount(), 0)
+        XCTAssertEqual(fileKeychain.itemCount(), 0)
+        XCTAssertTrue(fileKeychain.attemptedGroups().isEmpty)
+        XCTAssertEqual(fileRecorder.count(), 0)
     }
 }
