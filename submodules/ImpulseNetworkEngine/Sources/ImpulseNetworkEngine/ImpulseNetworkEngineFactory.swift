@@ -75,7 +75,10 @@ public struct ImpulseNetworkEngineFactory: NetworkEngineFactory {
             sessionBuilder: { datacenterId, role, _, delegate in
                 return root.makeSession(datacenterId: datacenterId, role: role, delegate: delegate)
             },
-            lifecycle: root
+            lifecycle: root,
+            sessionKnownAbsent: {
+                return !root.loginGate.isOpenNow && root.sessionStore.isKnownAbsent
+            }
         )
     }
 

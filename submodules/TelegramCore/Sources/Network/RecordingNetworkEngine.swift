@@ -18,6 +18,10 @@ final class RecordingNetworkEngine: NetworkEngine {
         return self.inner.kind
     }
 
+    func authorizedAccountStarted() {
+        self.inner.authorizedAccountStarted()
+    }
+
     func networkIdentity() -> String? {
         return self.inner.networkIdentity()
     }

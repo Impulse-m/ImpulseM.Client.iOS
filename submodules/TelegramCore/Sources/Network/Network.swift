@@ -984,7 +984,11 @@ public final class Network: NSObject {
         Logger.shared.log("Network", "requestMessageServiceAuthorizationRequired")
         self.loggedOut?()
     }
-    
+
+    func authorizedAccountStarted() {
+        self.engine.authorizedAccountStarted()
+    }
+
     func addUpdateSink(_ sink: NetworkEngineUpdateSink) {
         self.mainSession.addUpdateSink(sink)
     }

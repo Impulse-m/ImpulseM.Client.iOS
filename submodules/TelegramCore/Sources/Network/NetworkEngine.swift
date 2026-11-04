@@ -362,6 +362,9 @@ public protocol NetworkEngine: AnyObject {
     func activate()
     /// The network moved to another engine: what `activate` took over goes back to `MTContext`'s own.
     func deactivate()
+    /// An authorized account started on this network. An engine that keeps the login itself and has none stored reports
+    /// `networkSessionAuthorizationRequired` on the main session's delegate, which logs the account out.
+    func authorizedAccountStarted()
     /// A name for the network the device is on now (no address in it), which the local health check
     /// rate-limits its probes by; nil when the engine cannot tell.
     func networkIdentity() -> String?
@@ -372,6 +375,9 @@ public extension NetworkEngine {
     }
 
     func deactivate() {
+    }
+
+    func authorizedAccountStarted() {
     }
 
     func networkIdentity() -> String? {

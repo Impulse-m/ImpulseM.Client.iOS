@@ -1379,7 +1379,10 @@ public class Account {
         self.network.didReceiveSoftAuthResetError = { [weak self] in
             self?.postSmallLogIfNeeded()
         }
-        
+        if !supplementary {
+            self.network.authorizedAccountStarted()
+        }
+
         let networkStateQueue = Queue()
         
         let networkStateSignal = combineLatest(queue: networkStateQueue, self.stateManager.isUpdating, network.connectionStatus)

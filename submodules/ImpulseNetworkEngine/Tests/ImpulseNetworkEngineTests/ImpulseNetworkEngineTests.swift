@@ -95,6 +95,57 @@ final class ImpulseEngineBehaviourTests: XCTestCase {
         impulseFlushContextQueue()
     }
 
+    func testUnstoredSessionReportsLogoutOnceToMainDelegate() {
+        let engine: ImpulseNetworkEngine = ImpulseNetworkEngine(context: impulseMakeContext(), sessionBuilder: { datacenterId, _, _, _ in
+            return ImpulseFakeNetworkSession(datacenterId: datacenterId)
+        }, sessionKnownAbsent: {
+            return true
+        })
+        let mainDelegate: ImpulseCountingSessionDelegate = ImpulseCountingSessionDelegate()
+        let _: NetworkEngineSession = engine.makeSession(datacenterId: 2, role: .main, usageCalculationInfo: nil, delegate: mainDelegate)
+        engine.authorizedAccountStarted()
+        engine.authorizedAccountStarted()
+        XCTAssertEqual(mainDelegate.authorizationRequiredCount, 1)
+    }
+
+    func testStoredSessionReportsNothing() {
+        let engine: ImpulseNetworkEngine = ImpulseNetworkEngine(context: impulseMakeContext(), sessionBuilder: { datacenterId, _, _, _ in
+            return ImpulseFakeNetworkSession(datacenterId: datacenterId)
+        }, sessionKnownAbsent: {
+            return false
+        })
+        let mainDelegate: ImpulseCountingSessionDelegate = ImpulseCountingSessionDelegate()
+        let _: NetworkEngineSession = engine.makeSession(datacenterId: 2, role: .main, usageCalculationInfo: nil, delegate: mainDelegate)
+        engine.authorizedAccountStarted()
+        XCTAssertEqual(mainDelegate.authorizationRequiredCount, 0)
+    }
+
+    func testWorkerSessionDelegateIsNeverReported() {
+        let engine: ImpulseNetworkEngine = ImpulseNetworkEngine(context: impulseMakeContext(), sessionBuilder: { datacenterId, _, _, _ in
+            return ImpulseFakeNetworkSession(datacenterId: datacenterId)
+        }, sessionKnownAbsent: {
+            return true
+        })
+        let mainDelegate: ImpulseCountingSessionDelegate = ImpulseCountingSessionDelegate()
+        let workerDelegate: ImpulseCountingSessionDelegate = ImpulseCountingSessionDelegate()
+        let role: NetworkEngineSessionRole = .worker(masterDatacenterId: 2, isMedia: true, isCdn: false)
+        let _: NetworkEngineSession = engine.makeSession(datacenterId: 4, role: .main, usageCalculationInfo: nil, delegate: mainDelegate)
+        let _: NetworkEngineSession = engine.makeSession(datacenterId: 4, role: role, usageCalculationInfo: nil, delegate: workerDelegate)
+        engine.authorizedAccountStarted()
+        XCTAssertEqual(mainDelegate.authorizationRequiredCount, 1)
+        XCTAssertEqual(workerDelegate.authorizationRequiredCount, 0)
+    }
+
+    func testMissingSessionCheckReportsNothing() {
+        let engine: ImpulseNetworkEngine = ImpulseNetworkEngine(context: impulseMakeContext(), sessionBuilder: { datacenterId, _, _, _ in
+            return ImpulseFakeNetworkSession(datacenterId: datacenterId)
+        })
+        let mainDelegate: ImpulseCountingSessionDelegate = ImpulseCountingSessionDelegate()
+        let _: NetworkEngineSession = engine.makeSession(datacenterId: 2, role: .main, usageCalculationInfo: nil, delegate: mainDelegate)
+        engine.authorizedAccountStarted()
+        XCTAssertEqual(mainDelegate.authorizationRequiredCount, 0)
+    }
+
     func testNetworkIdentityHasNoAddress() throws {
         let engine: ImpulseNetworkEngine = ImpulseNetworkEngine(context: impulseMakeContext(), sessionBuilder: { datacenterId, _, _, _ in
             return ImpulseFakeNetworkSession(datacenterId: datacenterId)
@@ -106,5 +157,23 @@ final class ImpulseEngineBehaviourTests: XCTestCase {
         XCTAssertFalse(identity.contains("."))
         XCTAssertFalse(identity.contains(":"))
         XCTAssertEqual(engine.networkIdentity(), identity)
+    }
+}
+
+
+final class ImpulseCountingSessionDelegate: NetworkEngineSessionDelegate {
+    var authorizationRequiredCount: Int = 0
+
+
+    func networkSessionAuthorizationRequired() {
+        self.authorizationRequiredCount += 1
+    }
+
+
+    func networkSessionSoftAuthReset() {
+    }
+
+
+    func networkSessionConnectionStateChanged(_ state: NetworkEngineConnectionState) {
     }
 }

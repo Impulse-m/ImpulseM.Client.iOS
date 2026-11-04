@@ -371,7 +371,7 @@ public final class ImpulseLoginGate: @unchecked Sendable {
 
     /// True while the gate is open. The gate is the login state of the requests: a request that needs a login waits while
     /// it is closed, even when a session is stored, because the tokens are stored before the socket is rekeyed and the gate opens.
-    internal var isOpenNow: Bool {
+    public var isOpenNow: Bool {
         self.lock.lock()
         defer {
             self.lock.unlock()

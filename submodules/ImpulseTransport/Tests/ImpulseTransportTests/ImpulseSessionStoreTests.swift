@@ -608,4 +608,88 @@ final class ImpulseSessionStoreTests: XCTestCase {
         XCTAssertTrue(fileKeychain.attemptedGroups().isEmpty)
         XCTAssertEqual(fileRecorder.count(), 0)
     }
+
+
+    func testKnownAbsentForAnEmptyKeychain() {
+        let keychain: MemoryKeychain = MemoryKeychain()
+        let store: ImpulseSessionStore = self.makeStore(keychain: keychain, recorder: NoticeRecorder())
+
+        XCTAssertTrue(store.isKnownAbsent)
+    }
+
+
+    func testNotKnownAbsentWithAStoredSession() {
+        let keychain: MemoryKeychain = MemoryKeychain()
+        let store: ImpulseSessionStore = self.makeStore(keychain: keychain, recorder: NoticeRecorder())
+
+        store.save(ImpulseSessionTokens(accessToken: "access", refreshToken: "refresh", userId: 7))
+
+        XCTAssertFalse(store.isKnownAbsent)
+    }
+
+
+    func testKnownAbsentForAnUnusableBlob() throws {
+        let keychain: MemoryKeychain = MemoryKeychain()
+        let store: ImpulseSessionStore = self.makeStore(keychain: keychain, recorder: NoticeRecorder())
+
+        try keychain.writeData(
+            Data("not a session".utf8),
+            service: ImpulseSessionStore.serviceName,
+            account: "session",
+            accessGroup: testAccessGroup
+        )
+        XCTAssertTrue(store.isKnownAbsent)
+
+        try keychain.writeData(
+            Data(#"{"accessToken":"access","refreshToken":"refresh","userId":0}"#.utf8),
+            service: ImpulseSessionStore.serviceName,
+            account: "session",
+            accessGroup: testAccessGroup
+        )
+        XCTAssertTrue(store.isKnownAbsent)
+    }
+
+
+    func testNotKnownAbsentWhenTheReadFails() {
+        let keychain: MemoryKeychain = MemoryKeychain(refusedAccessGroupStatus: errSecInteractionNotAllowed)
+        let store: ImpulseSessionStore = self.makeStore(keychain: keychain, recorder: NoticeRecorder())
+
+        XCTAssertFalse(store.isKnownAbsent)
+    }
+
+
+    func testKnownAbsentWhenTheFileKeychainIsEmpty() {
+        let keychain: MemoryKeychain = MemoryKeychain(
+            refusedAccessGroupStatus: errSecMissingEntitlement,
+            refusedOwnItemsStatus: errSecMissingEntitlement
+        )
+        let store: ImpulseSessionStore = ImpulseSessionStore(
+            accountIndex: 0,
+            accessGroup: testAccessGroup,
+            keychain: keychain,
+            notice: self.makeNotice(NoticeRecorder()),
+            fileKeychain: MemoryKeychain(),
+            fileNotice: self.makeFileNotice(NoticeRecorder())
+        )
+
+        XCTAssertTrue(store.isKnownAbsent)
+    }
+
+
+    func testNotKnownAbsentWhenOwnItemsAreRefusedWithoutAFileKeychain() {
+        let keychain: MemoryKeychain = MemoryKeychain(
+            refusedAccessGroupStatus: errSecMissingEntitlement,
+            refusedOwnItemsStatus: errSecMissingEntitlement
+        )
+        let store: ImpulseSessionStore = ImpulseSessionStore(
+            accountIndex: 0,
+            accessGroup: testAccessGroup,
+            keychain: keychain,
+            notice: self.makeNotice(NoticeRecorder()),
+            fileKeychain: nil,
+            fileNotice: self.makeFileNotice(NoticeRecorder())
+        )
+
+        XCTAssertFalse(store.isKnownAbsent)
+    }
 }

@@ -30,16 +30,23 @@ public final class ImpulseNetworkEngine: NetworkEngine {
     private let sessionBuilder: ImpulseNetworkSessionBuilder
     private let actions: ImpulseNoNetworkActions
     private let lifecycle: ImpulseNetworkLifecycle?
+    /// Whether the account is known to have no stored session. Nil means the engine does not check.
+    private let sessionKnownAbsent: (() -> Bool)?
+    private let lock: NSLock = NSLock()
+    private weak var mainDelegate: NetworkEngineSessionDelegate?
+    private var reported: Bool = false
 
     public init(
         context: MTContext,
         sessionBuilder: @escaping ImpulseNetworkSessionBuilder,
-        lifecycle: ImpulseNetworkLifecycle? = nil
+        lifecycle: ImpulseNetworkLifecycle? = nil,
+        sessionKnownAbsent: (() -> Bool)? = nil
     ) {
         self.context = context
         self.sessionBuilder = sessionBuilder
         self.actions = ImpulseNoNetworkActions(context: context)
         self.lifecycle = lifecycle
+        self.sessionKnownAbsent = sessionKnownAbsent
     }
 
     public func makeSession(
@@ -48,7 +55,33 @@ public final class ImpulseNetworkEngine: NetworkEngine {
         usageCalculationInfo: MTNetworkUsageCalculationInfo?,
         delegate: NetworkEngineSessionDelegate?
     ) -> NetworkEngineSession {
+        if role == .main {
+            self.lock.lock()
+            self.mainDelegate = delegate
+            self.lock.unlock()
+        }
         return self.sessionBuilder(datacenterId, role, usageCalculationInfo, delegate)
+    }
+
+    /// An authorized account started on this network. When the account is known to have no stored session, the main
+    /// session's delegate is told to log it out. Reported once per engine.
+    public func authorizedAccountStarted() {
+        guard let sessionKnownAbsent: () -> Bool = self.sessionKnownAbsent else {
+            return
+        }
+        if !sessionKnownAbsent() {
+            return
+        }
+        self.lock.lock()
+        let delegate: NetworkEngineSessionDelegate? = self.mainDelegate
+        guard let mainDelegate: NetworkEngineSessionDelegate = delegate, !self.reported else {
+            self.lock.unlock()
+            return
+        }
+        self.reported = true
+        self.lock.unlock()
+        Logger.shared.log("ImpulseNetwork", "An authorized account started without a stored session, logging out")
+        mainDelegate.networkSessionAuthorizationRequired()
     }
 
     /// The salted name of the network the device is on, hex, without any address.

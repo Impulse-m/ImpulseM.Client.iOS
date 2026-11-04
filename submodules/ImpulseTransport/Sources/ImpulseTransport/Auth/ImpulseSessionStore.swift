@@ -464,6 +464,25 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
     }
 
 
+    /// True only when the keychain was read and holds no usable session: no item, or a blob that does not decode to an access
+    /// token and a non-zero user id. A read that fails (the keychain locked before the first unlock, access refused, any error
+    /// other than item-not-found) is not an answer, so it is false.
+    public var isKnownAbsent: Bool {
+        let account: String = self.sessionAccount
+        return self.access.run(fallback: false) { (keychain: any ImpulseKeychain, group: String?) throws -> Bool in
+            let data: Data? = try keychain.readData(
+                service: ImpulseSessionStore.serviceName,
+                account: account,
+                accessGroup: group
+            )
+            guard let blob: Data = data else {
+                return true
+            }
+            return ImpulseSessionStore.decodeSession(blob) == nil
+        }
+    }
+
+
     private let access: ImpulseKeychainAccess
     private let accountSuffix: String
     private let sessionAccount: String
@@ -518,17 +537,7 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
         guard let blob: Data = data else {
             return nil
         }
-        guard let stored: ImpulseStoredSession = try? JSONDecoder().decode(ImpulseStoredSession.self, from: blob) else {
-            return nil
-        }
-        guard !stored.accessToken.isEmpty, stored.userId != 0 else {
-            return nil
-        }
-        return ImpulseSessionTokens(
-            accessToken: stored.accessToken,
-            refreshToken: stored.refreshToken,
-            userId: stored.userId
-        )
+        return ImpulseSessionStore.decodeSession(blob)
     }
 
 
@@ -579,6 +588,22 @@ public struct ImpulseSessionStore: ImpulseSessionStorage {
         return ImpulseKeychainIdentityStore(
             access: self.access,
             accountSuffix: self.accountSuffix
+        )
+    }
+
+
+    /// The session in a stored blob, or nil when the blob does not decode or has no access token or no user id.
+    private static func decodeSession(_ blob: Data) -> ImpulseSessionTokens? {
+        guard let stored: ImpulseStoredSession = try? JSONDecoder().decode(ImpulseStoredSession.self, from: blob) else {
+            return nil
+        }
+        guard !stored.accessToken.isEmpty, stored.userId != 0 else {
+            return nil
+        }
+        return ImpulseSessionTokens(
+            accessToken: stored.accessToken,
+            refreshToken: stored.refreshToken,
+            userId: stored.userId
         )
     }
 }
